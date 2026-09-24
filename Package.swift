@@ -4,5 +4,7 @@ let package = Package(name: "FairyStackCompanion", platforms: [.macOS(.v13)], pr
     .executable(name: "FairyStackCompanion", targets: ["FairyStackCompanion"])
 ], targets: [
     .target(name: "CommandRunner", publicHeadersPath: "include"),
-    .executableTarget(name: "FairyStackCompanion", dependencies: ["CommandRunner"])
+    .target(name: "WorkspaceWindow"),
+    .executableTarget(name: "FairyStackCompanion", dependencies: ["CommandRunner", "WorkspaceWindow"]),
+    .testTarget(name: "WorkspaceWindowTests", dependencies: ["WorkspaceWindow"])
 ])

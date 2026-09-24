@@ -1,18 +1,29 @@
-# FairyStack Companion 1.0.1
+# FairyStack Companion 1.1.0
 
-Standalone menu-bar client for macOS 13+, bundle com.fairystack.companion.
-Let your FairyStack agent work on your Mac after you explicitly pair it.
-This MIT-licensed repository contains only the standalone client, installer,
-tests and protocol documentation. The FairyStack server is not included.
+Menu-bar client for macOS 13+, bundle com.fairystack.companion. It opens your
+FairyStack in a native window and can optionally run agent commands on this Mac.
+No Voice Feed dependency, microphone permission or capture token. Source lives
+with FairyStack. Existing hosted Mac builders receive only this credential-free
+source archive and its exact revision/checksum; they build Intel/Apple silicon,
+run process ownership tests, native window tests and launch checks, then
+sign/notarize the universal app.
 
-Install from [your Companion page](https://fairystack.com/companions), or see
-[DOWNLOAD.txt](DOWNLOAD.txt) for the Terminal one-liner. Pair through your own
-FairyStack account. No microphone access is required.
-
-Build with `swift build -c release`; behavioral process tests use
+Build with `swift build -c release`; `swift test` exercises WebKit mouse routing
+and image file promises; behavioral process tests use
 `python3 -m unittest discover -s tests -v`. The checked-in Info.plist and icon
 source define the signed app bundle. Download and pairing links are documented
 in FairyStack's live agent guide, Mac companions section.
+
+## FairyStack window
+
+Link menu → Open FairyStack window shows your FairyStack (https origin only) in a
+WebKit window with its own Dock icon while open. Other sites open in your default
+browser. Drag a conversation image to Finder to save the full-resolution original:
+the page announces the hovered image with a short-lived signed link, and the app
+downloads it through a file promise (two-minute limit; failures show an alert).
+A plain click still opens the image viewer. Downloads go to ~/Downloads.
+The installer passes your FairyStack address on first launch; change it from the
+FairyStack menu.
 
 Pair from the app's link menu after creating a code at your control origin's
 `/companions`. The app uses its own Keychain service and requires explicit local
@@ -26,8 +37,8 @@ execution are bounded; disconnection never replays a claimed command. Deliberate
 detached background processes are unsupported. Local activity and owner-scoped
 server receipts retain output; never print credentials.
 
-Physical laptop pairing and macOS login-item approval require device verification
-beyond automated tests.
+Physical laptop pairing, macOS login-item approval, and real iPhone installation
+require device verification beyond CI.
 
 ## Open-source client
 
@@ -48,17 +59,11 @@ no Homebrew, Python installation or administrator password is required.
 ## Build from source on a Mac
 
 Requirements: macOS 13 or later, Xcode Command Line Tools with Swift 5.9 or later,
-and Python 3 for tests:
-
-```sh
-git clone https://github.com/QualityCopperShovel/fairystack-companion.git
-cd fairystack-companion
-```
-
-Then build and test:
+and Python 3 for tests. Run these commands in the extracted source directory:
 
 ```sh
 swift build -c release
+swift test
 python3 -m unittest discover -s tests -v
 ```
 
@@ -73,20 +78,6 @@ that policy and the bundle/Keychain identities before distributing their own app
 See PROTOCOL.md for pairing, commands, timeouts, disconnection and revocation.
 The server and account service are separate from this open-source client.
 
-Source release 3 corrects the literal codesign requirement in the installer and
-updater source. The previously signed 1.0.1 binary is unchanged; its updater fix
-requires a new signed native release. The public installer is independently
-published and retains the same Apple identity and Gatekeeper checks.
-
-## Publication boundary
-
-The initial public import contains the 20 explicitly allowlisted files from
-FairyStack Companion 1.0.1 source release 3, plus this repository’s `.gitignore`.
-No parent repository history, server code, account data, logs, signing keys or
-credentials are included. The README was adapted for this standalone repository.
-Public Apple signing identifiers and download checksums are intentional: they
-let the installer verify the official app and do not grant signing authority.
-
-Before the initial publication, the export was manually reviewed and scanned
-with Gitleaks 8.30.1 (no findings). The icon contains only PNG image/palette data,
-without text metadata. This review is not a guarantee against all vulnerabilities.
+Version 1.1.0 adds the FairyStack window. The installer upgrades an older verified
+installation in place when the app is not running, because the 1.0.1 updater
+cannot verify its own replacement.

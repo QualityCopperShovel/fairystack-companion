@@ -11,7 +11,7 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-DIGEST = 'd956310c3f3c5f5e1f5e052030b58c68d1561ff65e7845e6bb40db07c4acfad6'
+DIGEST = '9021f6e186a82d8c7f8fa8bc546f0a549da53f8770a028d9442da4ce4a9c3e7a'
 
 
 class InstallerTests(unittest.TestCase):
@@ -54,10 +54,12 @@ class InstallerTests(unittest.TestCase):
                 assert Path(args[-1]).is_dir()
             elif cmd=='spctl': assert args[:3]==['--assess','--type','execute']
             elif cmd=='open': pass
+            elif cmd=='defaults': print(os.environ.get('INSTALLED_VERSION','1.1.0'))
+            elif cmd=='pgrep': sys.exit(0 if os.environ.get('RUNNING') else 1)
             else: sys.exit(5)
         '''))
         stub.chmod(0o755)
-        for cmd in ['uname','sw_vers','id','curl','ditto','codesign','spctl','open']:
+        for cmd in ['uname','sw_vers','id','curl','ditto','codesign','spctl','open','defaults','pgrep']:
             (self.bin/cmd).symlink_to(stub)
         self.env={**os.environ, 'HOME':str(self.home),'PATH':str(self.bin)+':'+os.environ['PATH'],
                   'FIXTURE':str(self.archive),'CALLS':str(self.root/'calls'),'CHILD_PID':str(self.root/'child')}
@@ -138,6 +140,35 @@ class InstallerTests(unittest.TestCase):
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid,signal.SIGKILL);proc.wait(timeout=3)
+
+    def installed_old(self):
+        self.target.mkdir(parents=True);sentinel=self.target/'old-build';sentinel.write_text('1.0.1');return sentinel
+
+    def test_older_verified_installation_is_upgraded_in_place(self):
+        sentinel=self.installed_old()
+        result=self.run_installer(INSTALLED_VERSION='1.0.1')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(sentinel.exists());self.assertTrue((self.target/'Contents/MacOS/FairyStackCompanion').exists())
+        self.assertIn('Updated FairyStack Companion 1.0.1 to 1.1.0',result.stdout);self.assert_clean()
+        calls=(self.root/'calls').read_text()
+        self.assertEqual(calls.count('codesign '),2,'both the old and the replacement app are verified')
+        self.assertIn("'--fairystack-origin', 'https://customer.fairystack.com'",calls)
+
+    def test_running_or_unreadable_older_installation_is_left_untouched(self):
+        sentinel=self.installed_old()
+        for env,message in [({'INSTALLED_VERSION':'1.0.1','RUNNING':'1'},'Choose Quit FairyStack Companion'),
+                            ({'INSTALLED_VERSION':'garbled'},'Could not read the installed')]:
+            with self.subTest(env=env):
+                result=self.run_installer(**env)
+                self.assertNotEqual(result.returncode,0);self.assertIn(message,result.stderr)
+                self.assertEqual(sentinel.read_text(),'1.0.1');self.assert_clean()
+        self.assertNotIn('curl ',(self.root/'calls').read_text())
+
+    def test_newer_installation_is_kept(self):
+        sentinel=self.installed_old()
+        result=self.run_installer(INSTALLED_VERSION='1.2.0')
+        self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(sentinel.exists())
+        self.assertNotIn('curl ',(self.root/'calls').read_text())
 
     def test_filename_requirement_regression_stops_before_installing(self):
         self.script.write_text(self.script.read_text().replace("-R '=anchor", "-R 'anchor"))

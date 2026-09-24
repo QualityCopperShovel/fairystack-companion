@@ -1,8 +1,12 @@
 import AppKit
 import ServiceManagement
+import WorkspaceWindow
+
+let companionVersion = "1.1.0"
 
 final class CompanionDelegate: NSObject, NSApplicationDelegate {
     private let commands = FairyStackCommands()
+    private lazy var workspace = WorkspaceWindows(version: companionVersion, pairedOrigin: { [weak self] in self?.commands.pairedOrigin })
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let updateItem = NSMenuItem(title: "Check for updates", action: #selector(checkUpdates), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Open at login", action: #selector(toggleLogin), keyEquivalent: "")
@@ -12,16 +16,52 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         status.button?.image = NSImage(systemSymbolName: "link", accessibilityDescription: "FairyStack Companion")
         let menu = NSMenu()
-        let title = NSMenuItem(title: "FairyStack Companion · 1.0.1", action: nil, keyEquivalent: "")
-        let open = NSMenuItem(title: "Open FairyStack…", action: #selector(openFairyStack), keyEquivalent: "")
+        let title = NSMenuItem(title: "FairyStack Companion · \(companionVersion)", action: nil, keyEquivalent: "")
+        let open = NSMenuItem(title: "Open FairyStack window", action: #selector(WorkspaceWindows.show), keyEquivalent: "")
+        let address = NSMenuItem(title: "Change FairyStack address…", action: #selector(WorkspaceWindows.changeAddress), keyEquivalent: "")
+        [open, address].forEach { $0.target = workspace }
         let quit = NSMenuItem(title: "Quit FairyStack Companion", action: #selector(quit), keyEquivalent: "q")
-        [updateItem, loginItem, open, quit].forEach { $0.target = self }
-        [title, .separator(), commands.menu, commands.activityMenu, open, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
+        [updateItem, loginItem, quit].forEach { $0.target = self }
+        [title, .separator(), open, address, .separator(), commands.menu, commands.activityMenu, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
         status.menu = menu
+        NSApp.mainMenu = mainMenu()
         commands.start(); refreshLogin(); updater.start()
+        workspace.adopt(CommandLine.arguments); workspace.restore()
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { workspace.show() }
+        return true
+    }
+    // Shown while a FairyStack window makes this a regular app; web views need the Edit actions for ⌘C/⌘V.
+    private func mainMenu() -> NSMenu {
+        func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); let menu = NSMenu(title: title)
+            items.forEach(menu.addItem); item.submenu = menu; return item
+        }
+        func item(_ title: String, _ action: Selector, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key); item.keyEquivalentModifierMask = modifiers; item.target = target; return item
+        }
+        let main = NSMenu()
+        main.addItem(submenu("FairyStack", [
+            item("About FairyStack Companion", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            .separator(), item("Change FairyStack Address…", #selector(WorkspaceWindows.changeAddress), "", target: workspace),
+            .separator(), item("Hide FairyStack", #selector(NSApplication.hide(_:)), "h"),
+            item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
+            .separator(), item("Quit FairyStack Companion", #selector(quit), "q", target: self)]))
+        main.addItem(submenu("Edit", [
+            item("Undo", Selector(("undo:")), "z"), item("Redo", Selector(("redo:")), "z", [.command, .shift]), .separator(),
+            item("Cut", #selector(NSText.cut(_:)), "x"), item("Copy", #selector(NSText.copy(_:)), "c"),
+            item("Paste", #selector(NSText.paste(_:)), "v"), item("Select All", #selector(NSText.selectAll(_:)), "a")]))
+        main.addItem(submenu("View", [
+            item("Reload", #selector(WorkspaceWindows.reload), "r", target: workspace),
+            item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])]))
+        main.addItem(submenu("Window", [
+            item("FairyStack Window", #selector(WorkspaceWindows.show), "0", target: workspace),
+            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
+            item("Close", #selector(NSWindow.performClose(_:)), "w")]))
+        return main
     }
     func applicationWillTerminate(_ notification: Notification) { commands.stop() }
-    @objc private func openFairyStack() { NSWorkspace.shared.open(URL(string: "https://fairystack.com/#existing-account")!) }
     @objc private func checkUpdates() { updater.check(announce: true) }
     private func refreshLogin() { loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off }
     @objc private func toggleLogin() {
