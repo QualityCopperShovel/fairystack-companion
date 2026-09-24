@@ -3,29 +3,29 @@ import Foundation
 import CryptoKit
 import Darwin
 
-final class CompanionUpdater {
+final class AppUpdater {
     struct Manifest: Decodable { let version: String; let download_url: String; let download_sha256: String; let notarized: Bool }
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 45; return URLSession(configuration: config) }()
     private let status: (String) -> Void
     private let installed: () -> Void
     private var timer: Timer?
-    private let updates = UpdateAdmission(currentVersion: "1.1.1")
+    private let updates = UpdateAdmission(currentVersion: "1.2.0")
     init(status: @escaping (String) -> Void, installed: @escaping () -> Void) { self.status = status; self.installed = installed }
     var stagedVersion: String? { updates.stagedVersion }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
     func check(announce: Bool = false) {
         guard updates.begin() else { return }
-        var request = URLRequest(url: URL(string: "https://fairystack.com/assets/mac-companion-version.json")!); request.timeoutInterval = 15
+        var request = URLRequest(url: URL(string: "https://fairystack.com/assets/mac-version.json")!); request.timeoutInterval = 15
         session.dataTask(with: request) { data, response, error in
             guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; self.updates.finish(); return }
-            guard self.updates.isNewer(manifest.version) else { if announce { self.status(self.updates.stagedVersion == nil ? "FairyStack Companion is up to date" : "Update installed · takes effect next launch") }; self.updates.finish(); return }
+            guard self.updates.isNewer(manifest.version) else { if announce { self.status(self.updates.stagedVersion == nil ? "FairyStack is up to date" : "Update installed · takes effect next launch") }; self.updates.finish(); return }
             guard manifest.notarized, let downloadURL = URL(string: manifest.download_url), downloadURL.scheme == "https", downloadURL.host == "fairystack.com" else { self.status("Update manifest is invalid"); self.updates.finish(); return }
             var downloadRequest = URLRequest(url: downloadURL); downloadRequest.timeoutInterval = 30
             self.session.dataTask(with: downloadRequest) { payload, downloadResponse, downloadError in
                 guard downloadError == nil, (downloadResponse as? HTTPURLResponse)?.statusCode == 200, let payload else { self.status("Update download failed"); self.updates.finish(); return }
                 let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
                 guard digest == manifest.download_sha256.lowercased() else { self.status("Update verification failed"); self.updates.finish(); return }
-                let archive = FileManager.default.temporaryDirectory.appendingPathComponent("fairystack-companion-update-\(UUID().uuidString).zip")
+                let archive = FileManager.default.temporaryDirectory.appendingPathComponent("fairystack-update-\(UUID().uuidString).zip")
                 do { try payload.write(to: archive, options: .atomic); self.install(archive, version: manifest.version) } catch { self.status("Update could not be saved"); self.updates.finish() }
             }.resume()
         }.resume()
@@ -42,14 +42,14 @@ final class CompanionUpdater {
         }
     }
     private func install(_ archive: URL, version: String) {
-        DispatchQueue.main.async { self.status("Installing FairyStack Companion update…") }
+        DispatchQueue.main.async { self.status("Installing FairyStack update…") }
         DispatchQueue.global(qos: .userInitiated).async {
             let deadline = Date().addingTimeInterval(240)
             let manager = FileManager.default
-            let work = manager.temporaryDirectory.appendingPathComponent("fairystack-companion-update-\(UUID().uuidString)", isDirectory: true)
-            let staged = work.appendingPathComponent("FairyStack Companion.app", isDirectory: true)
+            let work = manager.temporaryDirectory.appendingPathComponent("fairystack-update-\(UUID().uuidString)", isDirectory: true)
+            let staged = work.appendingPathComponent(appBundleName, isDirectory: true)
             let target = Bundle.main.bundleURL
-            let backup = target.deletingLastPathComponent().appendingPathComponent("FairyStack Companion.previous.app", isDirectory: true)
+            let backup = target.deletingLastPathComponent().appendingPathComponent("FairyStack.previous.app", isDirectory: true)
             defer { try? manager.removeItem(at: archive); try? manager.removeItem(at: work); self.updates.finish() }
             do {
                 try manager.createDirectory(at: work, withIntermediateDirectories: true)

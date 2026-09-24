@@ -2,30 +2,55 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let companionVersion = "1.1.1"
+let appVersion = "1.2.0"
+// Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
+// so only the folder name changes; a legacy install moves itself once on first launch.
+let appBundleName = "FairyStack.app"
+let legacyBundleName = "FairyStack Companion.app"
+let loginItemArgument = "--fairystack-login-item"
 
-final class CompanionDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private let commands = FairyStackCommands()
-    private lazy var workspace = WorkspaceWindows(version: companionVersion, pairedOrigin: { [weak self] in self?.commands.pairedOrigin })
+    private lazy var workspace = WorkspaceWindows(version: appVersion, pairedOrigin: { [weak self] in self?.commands.pairedOrigin })
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let updateItem = NSMenuItem(title: "Check for updates", action: #selector(checkUpdates), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Open at login", action: #selector(toggleLogin), keyEquivalent: "")
-    private lazy var updater = CompanionUpdater(status: { [weak self] text in
+    private lazy var updater = AppUpdater(status: { [weak self] text in
         DispatchQueue.main.async { self?.updateItem.title = text }
     }, installed: { [weak self] in self?.restart() })
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let renamed = adoptBundleName() else { finishLaunching(updates: true); return }
+        var arguments = Array(CommandLine.arguments.dropFirst())
+        if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister(); arguments.append(loginItemArgument) }
+        relaunch(renamed, arguments: arguments) { [weak self] in
+            self?.finishLaunching(updates: false)
+            self?.updateItem.title = "Moved to FairyStack.app · quit and reopen to finish"
+        }
+    }
+    /// Moves a legacyBundleName install to appBundleName; returns the new bundle to relaunch.
+    private func adoptBundleName() -> URL? {
+        let current = Bundle.main.bundleURL
+        guard current.lastPathComponent == legacyBundleName else { return nil }
+        let renamed = current.deletingLastPathComponent().appendingPathComponent(appBundleName, isDirectory: true)
+        // The installer already placed FairyStack.app beside this copy; hand over to it.
+        if FileManager.default.fileExists(atPath: renamed.path) { return renamed }
+        do { try FileManager.default.moveItem(at: current, to: renamed); return renamed }
+        catch { NSLog("FairyStack could not rename %@: %@", current.path, error.localizedDescription); return nil }
+    }
+    private func finishLaunching(updates: Bool) {
         status.button?.image = FairyIcon.menuBar()
         let menu = NSMenu()
-        let title = NSMenuItem(title: "FairyStack Companion · \(companionVersion)", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: "FairyStack · \(appVersion)", action: nil, keyEquivalent: "")
         let open = NSMenuItem(title: "Open FairyStack window", action: #selector(WorkspaceWindows.show), keyEquivalent: "")
         let address = NSMenuItem(title: "Change FairyStack address…", action: #selector(WorkspaceWindows.changeAddress), keyEquivalent: "")
         [open, address].forEach { $0.target = workspace }
-        let quit = NSMenuItem(title: "Quit FairyStack Companion", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit FairyStack", action: #selector(quit), keyEquivalent: "q")
         [updateItem, loginItem, quit].forEach { $0.target = self }
         [title, .separator(), open, address, .separator(), commands.menu, commands.activityMenu, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
         status.menu = menu
         NSApp.mainMenu = mainMenu()
-        commands.start(); refreshLogin(); updater.start()
+        if CommandLine.arguments.contains(loginItemArgument) { try? SMAppService.mainApp.register() }
+        commands.start(); refreshLogin(); if updates { updater.start() }
         workspace.adopt(CommandLine.arguments); workspace.restore()
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -43,11 +68,11 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate {
         }
         let main = NSMenu()
         main.addItem(submenu("FairyStack", [
-            item("About FairyStack Companion", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            item("About FairyStack", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
             .separator(), item("Change FairyStack Address…", #selector(WorkspaceWindows.changeAddress), "", target: workspace),
             .separator(), item("Hide FairyStack", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
-            .separator(), item("Quit FairyStack Companion", #selector(quit), "q", target: self)]))
+            .separator(), item("Quit FairyStack", #selector(quit), "q", target: self)]))
         main.addItem(submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"), item("Redo", Selector(("redo:")), "z", [.command, .shift]), .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x"), item("Copy", #selector(NSText.copy(_:)), "c"),
@@ -73,23 +98,27 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate {
     }
     private func restart() {
         commands.stop()
-        let config = NSWorkspace.OpenConfiguration(); config.createsNewApplicationInstance = true; config.activates = false
+        relaunch(Bundle.main.bundleURL, arguments: []) { [weak self] in self?.updateItem.title = "Update installed · quit and reopen to finish" }
+    }
+    /// Opens a new instance of `bundle` and quits this one; calls `failed` if it does not start within 15 s.
+    private func relaunch(_ bundle: URL, arguments: [String], failed: @escaping () -> Void) {
+        let config = NSWorkspace.OpenConfiguration(); config.createsNewApplicationInstance = true; config.activates = false; config.arguments = arguments
         var finished = false
-        let deadline = DispatchWorkItem { if !finished { finished = true; self.updateItem.title = "Update installed · quit and reopen to finish" } }
+        let deadline = DispatchWorkItem { if !finished { finished = true; failed() } }
         DispatchQueue.main.asyncAfter(deadline: .now()+15, execute: deadline)
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { application,error in
+        NSWorkspace.shared.openApplication(at: bundle, configuration: config) { application,error in
             DispatchQueue.main.async {
                 guard !finished else { application?.terminate(); return }
                 finished = true; deadline.cancel()
                 if error == nil, let application, application.processIdentifier != ProcessInfo.processInfo.processIdentifier { NSApp.terminate(nil) }
-                else { self.updateItem.title = "Update installed · quit and reopen to finish" }
+                else { failed() }
             }
         }
     }
     @objc private func quit() { commands.stop(); NSApp.terminate(nil) }
 }
 let app = NSApplication.shared
-let delegate = CompanionDelegate()
+let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()

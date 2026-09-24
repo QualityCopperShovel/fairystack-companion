@@ -14,7 +14,7 @@ public enum FairyIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "FairyStack Companion"
+        image.accessibilityDescription = "FairyStack"
         return image
     }
     private static func wing(center: NSPoint, degrees: CGFloat) -> NSBezierPath {

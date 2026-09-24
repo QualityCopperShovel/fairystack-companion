@@ -15,7 +15,7 @@ def requirements():
     line=next(line for line in (ROOT/'install.sh').read_text().splitlines() if 'run 30 codesign ' in line)
     args=shlex.split(line)
     installer=args[args.index('-R')+1]
-    updater=(ROOT/'Sources/FairyStackCompanion/CompanionUpdater.swift').read_text()
+    updater=(ROOT/'Sources/FairyStackCompanion/AppUpdater.swift').read_text()
     native=json.loads(re.search(r'"-R", ("(?:\\.|[^"\\])*")',updater).group(1))
     return installer,native
 

@@ -1,4 +1,4 @@
-FairyStack Companion: install and open with one Terminal command on macOS 13+.
+FairyStack for Mac: install and open with one Terminal command on macOS 13+.
 
 (set -o pipefail; curl --fail --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 30 https://fairystack.com/assets/install-companion.sh | /bin/bash -s --)
 
@@ -8,7 +8,7 @@ sign-in instructions. Never include a password or connection code in the command
 
 The MIT-licensed install.sh downloads, checks SHA-256, verifies the Apple signing
 team and bundle identity, asks Gatekeeper to assess the app, installs into
-~/Applications, opens Companion, and opens the pairing page. It does not use sudo,
+~/Applications as FairyStack.app, opens it, and opens the pairing page. It does not use sudo,
 remove quarantine or disable security checks. An existing installation is verified
 and reopened without replacement. Only the official updater replaces an installed app.
 

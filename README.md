@@ -1,6 +1,7 @@
-# FairyStack Companion 1.1.1
+# FairyStack for Mac 1.2.0
 
-Menu-bar client for macOS 13+, bundle com.fairystack.companion. It opens your
+The official FairyStack client for macOS 13+: FairyStack.app, bundle
+com.fairystack.companion (kept from its Companion era). It opens your
 FairyStack in a native window and can optionally run agent commands on this Mac.
 No Voice Feed dependency, microphone permission or capture token. Source lives
 with FairyStack. Existing hosted Mac builders receive only this credential-free
@@ -12,7 +13,7 @@ Build with `swift build -c release`; `swift test` exercises WebKit mouse routing
 and image file promises; behavioral process tests use
 `python3 -m unittest discover -s tests -v`. The checked-in Info.plist and icon
 source define the signed app bundle. Download and pairing links are documented
-in FairyStack's live agent guide, Mac companions section.
+in FairyStack's live agent guide, FairyStack for Mac section.
 
 ## FairyStack window
 
@@ -67,7 +68,10 @@ swift test
 python3 -m unittest discover -s tests -v
 ```
 
-The executable is `.build/release/FairyStackCompanion`. A development build is
+The executable is `.build/release/FairyStackCompanion`; builds before 1.2 were
+named FairyStack Companion.app, and their updaters pin this executable name and
+the bundle identifier. A legacy install renames itself to FairyStack.app on first
+launch. A development build is
 not the signed/notarized downloadable app. For normal use, install that published
 app; building locally does not confer the official signing identity. The bundled
 Info.plist and Resources/AppIcon.png are inputs for an app bundle. Signing and

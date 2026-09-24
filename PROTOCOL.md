@@ -2,7 +2,7 @@
 
 
 `/companions` is the owner-authenticated pairing and command activity surface.
-FairyStack Companion is a standalone signed/notarized Mac app with its own
+FairyStack for Mac (FairyStack.app) is a standalone signed/notarized Mac app with its own
 Keychain entry, menu, login item and automatic-update channel. It has no microphone
 permission and no Voice Feed dependency. A human creates
 a ten-minute code on this page, pastes it locally into **FairyStack commands:

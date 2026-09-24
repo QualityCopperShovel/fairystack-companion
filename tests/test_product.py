@@ -15,7 +15,29 @@ class StandaloneProductTests(unittest.TestCase):
     def test_version_matches_bundle_and_updater(self):
         version=(ROOT/'VERSION').read_text().strip()
         self.assertEqual(plistlib.loads((ROOT/'Info.plist').read_bytes())['CFBundleShortVersionString'],version)
-        self.assertIn('currentVersion: "'+version+'"',(ROOT/'Sources/FairyStackCompanion/CompanionUpdater.swift').read_text())
+        self.assertIn('currentVersion: "'+version+'"',(ROOT/'Sources/FairyStackCompanion/AppUpdater.swift').read_text())
+
+    def test_product_is_named_fairystack_but_keeps_identifiers_old_updaters_pin(self):
+        info=plistlib.loads((ROOT/'Info.plist').read_bytes())
+        self.assertEqual((info['CFBundleName'],info['CFBundleDisplayName']),('FairyStack','FairyStack'))
+        main=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
+        updater=(ROOT/'Sources/FairyStackCompanion/AppUpdater.swift').read_text()
+        self.assertIn('let appBundleName = "FairyStack.app"',main)
+        self.assertIn('let legacyBundleName = "FairyStack Companion.app"',main)
+        # 1.1.1 updaters stage exactly this executable path and signing identity.
+        self.assertIn('Contents/MacOS/FairyStackCompanion',updater)
+        self.assertIn('identifier \\"com.fairystack.companion\\"',updater)
+        self.assertIn('appendingPathComponent(appBundleName, isDirectory: true)',updater)
+        self.assertIn('https://fairystack.com/assets/mac-version.json',updater,'the legacy manifest only bridges pre-1.2 builds')
+        visible='\n'.join(p.read_text() for p in (ROOT/'Sources').rglob('*.swift')).replace('let legacyBundleName = "FairyStack Companion.app"','')
+        self.assertNotIn('FairyStack Companion',visible)
+    def test_legacy_bundle_moves_once_then_relaunches(self):
+        main=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
+        self.assertIn('guard let renamed = adoptBundleName() else { finishLaunching(updates: true); return }',main)
+        self.assertIn('current.lastPathComponent == legacyBundleName',main)
+        self.assertIn('try FileManager.default.moveItem(at: current, to: renamed)',main)
+        self.assertIn('arguments.append(loginItemArgument)',main,'a login item follows the renamed bundle')
+        self.assertIn('finishLaunching(updates: false)',main,'a failed relaunch never updates into the old path')
 
     def test_companion_icon_is_distinct_from_main_app(self):
         import hashlib
@@ -34,7 +56,7 @@ class WorkspaceWindowTests(unittest.TestCase):
     source=(ROOT/'Sources/WorkspaceWindow/WorkspaceWindows.swift').read_text()
     def test_menu_title_uses_the_bundle_version(self):
         version=(ROOT/'VERSION').read_text().strip()
-        self.assertIn('let companionVersion = "'+version+'"',(ROOT/'Sources/FairyStackCompanion/main.swift').read_text())
+        self.assertIn('let appVersion = "'+version+'"',(ROOT/'Sources/FairyStackCompanion/main.swift').read_text())
     def test_window_is_limited_to_the_https_origin_and_identifies_itself(self):
         self.assertIn('parts.scheme == "https"',self.source)
         self.assertIn('applicationNameForUserAgent = "FairyStackMac/',self.source)

@@ -3,7 +3,7 @@ import Foundation
 import Security
 import CommandRunner
 
-// The standalone companion has its own explicitly paired Keychain authority.
+// The standalone app has its own explicitly paired Keychain authority.
 final class FairyStackCommands: NSObject, @unchecked Sendable {
     let menu = NSMenuItem(title: "FairyStack commands: Off…", action: nil, keyEquivalent: "")
     let activityMenu = NSMenuItem(title: "Open Mac command activity…", action: nil, keyEquivalent: "")
@@ -57,7 +57,7 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
             return
         }
         let a = NSAlert(); a.messageText = "Connect FairyStack commands"
-        a.informativeText = "Paste the connection code from FairyStack’s Mac companions page. Agents for that account can run shell commands as your Mac user. The selected folder is a working directory, not a security sandbox. Password and administrator prompts cannot be answered remotely."
+        a.informativeText = "Paste the connection code from FairyStack’s Mac pairing page. Agents for that account can run shell commands as your Mac user. The selected folder is a working directory, not a security sandbox. Password and administrator prompts cannot be answered remotely."
         let field = NSSecureTextField(frame: NSRect(x: 0,y: 0,width: 420,height: 28)); a.accessoryView = field
         a.addButton(withTitle: "Choose workspace…"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
@@ -65,7 +65,7 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
         guard parts.count == 2, let url = URL(string: parts[0]), url.scheme == "https", url.host != nil,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/", parts[1].hasPrefix("fs_mac_"), parts[1].count < 100 else {
-            showError("Invalid connection code. Create a new code on your FairyStack Mac companions page."); return
+            showError("Invalid connection code. Create a new code on your FairyStack Mac pairing page."); return
         }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.message = "Choose the working folder for FairyStack commands. Commands run with your user account’s permissions."
