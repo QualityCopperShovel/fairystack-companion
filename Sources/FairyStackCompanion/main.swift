@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.5.1"
+let appVersion = "1.6.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -86,11 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let title = NSMenuItem(title: "FairyStack · \(appVersion)", action: nil, keyEquivalent: "")
         let open = NSMenuItem(title: "Open FairyStack window", action: #selector(WorkspaceWindows.show), keyEquivalent: "")
-        let address = NSMenuItem(title: "Change FairyStack address…", action: #selector(WorkspaceWindows.changeAddress), keyEquivalent: "")
+        let address = NSMenuItem(title: "Add stack by address…", action: #selector(WorkspaceWindows.changeAddress), keyEquivalent: "")
         [open, address].forEach { $0.target = workspace }
         let quit = NSMenuItem(title: "Quit FairyStack", action: #selector(quit), keyEquivalent: "q")
         [updateItem, loginItem, quit].forEach { $0.target = self }
         [title, .separator(), open, address, .separator(), commands.menu, commands.activityMenu, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
+        workspace.installStackMenu(in: menu, before: open)
         status.menu = menu
         NSApp.mainMenu = mainMenu()
         if CommandLine.arguments.contains(loginItemArgument) { try? SMAppService.mainApp.register() }
@@ -117,10 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         main.addItem(submenu("FairyStack", [
             item("About FairyStack", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
-            .separator(), item("Change FairyStack Address…", #selector(WorkspaceWindows.changeAddress), "", target: workspace),
+            .separator(), item("Add Stack by Address…", #selector(WorkspaceWindows.changeAddress), "", target: workspace),
             .separator(), item("Hide FairyStack", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
             .separator(), item("Quit FairyStack", #selector(quit), "q", target: self)]))
+        if let menu = main.items.first?.submenu, let anchor = menu.items.first { workspace.installStackMenu(in: menu, before: anchor) }
         main.addItem(submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"), item("Redo", Selector(("redo:")), "z", [.command, .shift]), .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x"), item("Copy", #selector(NSText.copy(_:)), "c"),
@@ -129,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Reload", #selector(WorkspaceWindows.reload), "r", target: workspace),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])]))
         main.addItem(submenu("Window", [
+            item("New FairyStack Window", #selector(WorkspaceWindows.newWindow), "n", target: workspace),
             item("FairyStack Window", #selector(WorkspaceWindows.show), "0", target: workspace),
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Close", #selector(NSWindow.performClose(_:)), "w")]))

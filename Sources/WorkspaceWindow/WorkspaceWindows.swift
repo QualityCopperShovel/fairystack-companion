@@ -14,20 +14,24 @@ enum WorkspaceAddress {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !value.contains("://") { value = "https://" + value }
         guard let parts = URLComponents(string: value), parts.scheme == "https",
-              let host = parts.host?.lowercased(), host.contains("."), parts.user == nil, parts.password == nil,
+              let host = parts.host?.lowercased(), host.range(of: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\.[a-z0-9-]+$", options: .regularExpression) != nil, !host.contains(".."),
+              (parts.port == nil || (1...65535).contains(parts.port!)), parts.user == nil, parts.password == nil,
               parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/" else { return nil }
-        var origin = URLComponents(); origin.scheme = "https"; origin.host = host; origin.port = parts.port
+        var origin = URLComponents(); origin.scheme = "https"; origin.host = host; origin.port = parts.port == 443 ? nil : parts.port
         return origin.url
     }
     /// fairystack://open?origin=https://you.fairystack.com — how a stack's Mac page hands its address to a downloaded app.
     static func fromOpenURL(_ url: URL) -> URL? {
-        guard url.scheme?.lowercased() == "fairystack", url.host?.lowercased() == "open",
-              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "origin" })?.value,
-              let origin = parse(value), origin.host != "fairystack.com" else { return nil }
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "fairystack", parts.host?.lowercased() == "open",
+              parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
+              parts.path.isEmpty, let items = parts.queryItems, items.count == 1,
+              items[0].name == "origin", let value = items[0].value,
+              let origin = parse(value), origin.host != "fairystack.com", origin.host != "www.fairystack.com" else { return nil }
         return origin
     }
     static func sameOrigin(_ url: URL, _ origin: URL) -> Bool {
-        url.scheme == "https" && url.host?.lowercased() == origin.host && url.port == origin.port
+        url.scheme == "https" && url.user == nil && url.password == nil && url.host?.lowercased() == origin.host && (url.port ?? 443) == (origin.port ?? 443)
     }
 }
 
@@ -60,7 +64,7 @@ final class ImageFileDragSource: NSObject, NSDraggingSource, NSFilePromiseProvid
     private let session: URLSession
     init(configuration: URLSessionConfiguration = .ephemeral) {
         configuration.timeoutIntervalForRequest = 30; configuration.timeoutIntervalForResource = 120
-        session = URLSession(configuration: configuration)
+        session = URLSession(configuration: configuration, delegate: ImageOriginRedirects(), delegateQueue: nil)
     }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         context == .outsideApplication ? .copy : []
@@ -72,11 +76,12 @@ final class ImageFileDragSource: NSObject, NSDraggingSource, NSFilePromiseProvid
     nonisolated func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue { queue }
     nonisolated func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo destination: URL, completionHandler: @escaping (Error?) -> Void) {
         guard let image = provider.userInfo as? DraggableImage else { return finish(completionHandler, "The dragged image lost its source.") }
+        guard image.isFresh else { return finish(completionHandler, "The image link expired. Hover the image again and retry.") }
         let finish = self.finish
         session.downloadTask(with: image.url) { file, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if let error { return finish(completionHandler, "Downloading \(image.filename) failed: \(error.localizedDescription)") }
-            guard status == 200, let file else { return finish(completionHandler, "Downloading \(image.filename) failed (HTTP \(status)). Hover the image again and retry.") }
+            guard status == 200, let file, let finalURL = response?.url, finalURL.scheme == image.url.scheme, finalURL.host == image.url.host, (finalURL.port ?? 443) == (image.url.port ?? 443) else { return finish(completionHandler, "Downloading \(image.filename) failed (HTTP \(status)). Hover the image again and retry.") }
             do { try FileManager.default.moveItem(at: file, to: destination); completionHandler(nil) }
             catch { finish(completionHandler, "Saving \(image.filename) failed: \(error.localizedDescription)") }
         }.resume()
@@ -87,7 +92,18 @@ final class ImageFileDragSource: NSObject, NSDraggingSource, NSFilePromiseProvid
     }
 }
 
+private final class ImageOriginRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let original = task.originalRequest?.url, let next = request.url,
+              next.scheme == "https", next.host == original.host, (next.port ?? 443) == (original.port ?? 443),
+              next.user == nil, next.password == nil else { completionHandler(nil); return }
+        completionHandler(request)
+    }
+}
+
 final class WorkspaceWebView: WKWebView {
+    var workspaceOrigin: URL?
     var draggable: DraggableImage?
     let dragSource = ImageFileDragSource()
     private var pressed: (event: NSEvent, image: DraggableImage)?
@@ -131,11 +147,15 @@ final class WorkspaceWebView: WKWebView {
     }
 }
 
-public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
+public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate, NSMenuDelegate {
     static let dragMessage = "fairystackDrag"
     static let openKey = "workspaceWindowOpen"
     private let version: String
     private let pairedOrigin: () -> URL?
+    private let store: SavedStacks
+    private var focusedView: WorkspaceWebView?
+    private var restoring = false
+    private var menuAnchors: [ObjectIdentifier: NSMenuItem] = [:]
     private var pages: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []
     private var downloads: [ObjectIdentifier: URL] = [:]
     private lazy var content: WKUserContentController = {
@@ -144,126 +164,207 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         return controller
     }()
 
-    public init(version: String, pairedOrigin: @escaping () -> URL?) { self.version = version; self.pairedOrigin = pairedOrigin }
-
-    /// Set only for this launch when the owner chooses the trial.
+    public init(version: String, pairedOrigin: @escaping () -> URL?, defaults: UserDefaults = .standard) {
+        self.version = version; self.pairedOrigin = pairedOrigin; self.store = SavedStacks(defaults: defaults)
+        super.init()
+    }
     private var trialSession: URL?
-    var origin: URL? {
-        UserDefaults.standard.string(forKey: WorkspaceAddress.defaultsKey).flatMap(WorkspaceAddress.parse) ?? pairedOrigin() ?? trialSession
-    }
-    /// Arguments that let a relaunched build reopen exactly what this one shows.
+    var origin: URL? { current?.view.workspaceOrigin ?? store.selected ?? trialSession }
     public var resumeArguments: [String] {
-        guard let page = current, let url = page.view.url, let origin, WorkspaceAddress.sameOrigin(url, origin) else { return [] }
-        return ["--fairystack-resume", url.absoluteString] + (NSApp.isActive ? ["--fairystack-activate"] : [])
+        persistWindows()
+        return NSApp.isActive ? ["--fairystack-activate"] : []
     }
-    /// Set once the app starts quitting: windows AppKit closes on the way out were not closed by the owner.
-    public var terminating = false
+    public var terminating = false { didSet { if terminating { persistWindows() } } }
     private var resumeURL: URL?
     private var activateOnResume = false
     public func adopt(_ arguments: [String]) {
-        if let index = arguments.firstIndex(of: "--fairystack-resume"), index + 1 < arguments.count,
-           let url = URL(string: arguments[index + 1]), let origin, WorkspaceAddress.sameOrigin(url, origin) {
-            resumeURL = url; activateOnResume = arguments.contains("--fairystack-activate")
+        store.migrate(pairedOrigin: pairedOrigin())
+        activateOnResume = arguments.contains("--fairystack-activate")
+        if let index = arguments.firstIndex(of: "--fairystack-origin"), index + 1 < arguments.count,
+           let url = WorkspaceAddress.parse(arguments[index + 1]), url.host != "fairystack.com" {
+            register(url)
         }
-        guard let index = arguments.firstIndex(of: "--fairystack-origin"), index + 1 < arguments.count,
-              UserDefaults.standard.string(forKey: WorkspaceAddress.defaultsKey) == nil,
-              let url = WorkspaceAddress.parse(arguments[index + 1]), url.host != "fairystack.com" else { return }
-        UserDefaults.standard.set(url.absoluteString, forKey: WorkspaceAddress.defaultsKey)
+        // Compatibility with the previous updater. Only a previously saved stack may resume a URL.
+        if let index = arguments.firstIndex(of: "--fairystack-resume"), index + 1 < arguments.count,
+           let url = URL(string: arguments[index + 1]), store.entries.contains(where: { WorkspaceAddress.sameOrigin(url, $0.url) }) {
+            resumeURL = url
+        }
     }
     public func restore() {
-        if let url = resumeURL {
-            // An update relaunch: reopen the same page, in front only if the old build was.
-            resumeURL = nil
-            open(URLRequest(url: url, timeoutInterval: 30), configuration: nil, activate: activateOnResume)
-            return
+        guard pages.isEmpty else { return } // An early URL handoff already opened its window.
+        restoring = true
+        let records = store.windows
+        for record in records {
+            open(URLRequest(url: record.url, timeoutInterval: 30), origin: record.origin, configuration: nil, activate: false)
         }
-        if origin != nil && UserDefaults.standard.object(forKey: Self.openKey) as? Bool != false { show() }
+        if pages.isEmpty, let url = resumeURL, let stack = store.entries.first(where: { WorkspaceAddress.sameOrigin(url, $0.url) }) {
+            open(URLRequest(url: url, timeoutInterval: 30), origin: stack.url, configuration: nil, activate: activateOnResume)
+        } else if pages.isEmpty && !store.hasWindowSnapshot && store.defaults.object(forKey: Self.openKey) as? Bool != false, let origin = store.selected {
+            openStack(origin, activate: activateOnResume)
+        }
+        if let selected = store.selected, let page = pages.first(where: { $0.view.workspaceOrigin == selected }) {
+            focusedView = page.view
+            if activateOnResume { focus(page.window) }
+        }
+        restoring = false; persistWindows()
     }
-    /// First launch from a download has no address yet: ask for it instead of sitting silently in the menu bar.
-    public func welcomeIfNeeded() {
-        if origin == nil && pages.isEmpty { show() }
+    public func welcomeIfNeeded() { if origin == nil && pages.isEmpty { show() } }
+    private func register(_ target: URL) {
+        if target == WorkspaceAddress.trialOrigin { trialSession = target } else { store.add(target) }
     }
     public func handleOpenURL(_ url: URL) {
         guard let target = WorkspaceAddress.fromOpenURL(url) else { alert("Link not opened", "That FairyStack link is not a valid address.", for: nil); return }
-        if target != origin {
-            NSApp.activate(ignoringOtherApps: true)
-            // Any web page can open this link, so switching addresses needs the owner's consent.
-            let confirm = NSAlert(); confirm.messageText = "Open FairyStack at \(target.host ?? "")?"
-            confirm.informativeText = "The FairyStack window will use this address from now on. Continue only if you started this from your own FairyStack."
-            confirm.addButton(withTitle: "Open"); confirm.addButton(withTitle: "Cancel")
-            guard confirm.runModal() == .alertFirstButtonReturn else { return }
-            UserDefaults.standard.set(target.absoluteString, forKey: WorkspaceAddress.defaultsKey)
-            for page in pages { page.window.close() }
+        NSApp.activate(ignoringOtherApps: true)
+        let confirm = NSAlert(); confirm.messageText = "Open FairyStack at \(target.host ?? "")?"
+        confirm.informativeText = "\(target.absoluteString)\n\nContinue only if you started this from your own FairyStack. This adds the stack to your menu; it does not pair Mac commands or transfer a sign-in."
+        confirm.addButton(withTitle: "Open"); confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        register(target); openStack(target)
+    }
+    private func focus(_ window: NSWindow) {
+        NSApp.setActivationPolicy(.regular); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+    @discardableResult
+    func openStack(_ target: URL, newWindow: Bool = false, activate: Bool = true) -> WorkspaceWebView {
+        if !newWindow, let page = pages.first(where: { $0.view.workspaceOrigin == target }) {
+            focusedView = page.view; store.select(target)
+            if activate { focus(page.window) }; return page.view
         }
-        show()
+        return open(URLRequest(url: target.appendingPathComponent("workspace/"), timeoutInterval: 30), origin: target, configuration: nil, activate: activate)
     }
     @objc public func show() {
-        if let page = pages.first { NSApp.setActivationPolicy(.regular); page.window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        guard let origin = origin ?? askForAddress(current: nil) else { return }
-        open(URLRequest(url: origin.appendingPathComponent("workspace/"), timeoutInterval: 30), configuration: nil)
+        if let current { focus(current.window); return }
+        guard let target = origin ?? welcome() else { return }
+        openStack(target)
     }
     @objc public func changeAddress() {
-        guard let url = askForAddress(current: origin) else { return }
-        for page in pages { page.window.close() }
-        open(URLRequest(url: url.appendingPathComponent("workspace/"), timeoutInterval: 30), configuration: nil)
+        guard let target = askForAddress(current: origin) else { return }
+        openStack(target)
+    }
+    @objc public func newWindow() {
+        guard let target = origin else { show(); return }; openStack(target, newWindow: true)
     }
     @objc public func reload() { current?.view.reload() }
     private var current: (window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)? {
-        pages.first { $0.window.isKeyWindow } ?? pages.first
+        pages.first { $0.view === focusedView } ?? pages.first { $0.window.isKeyWindow } ?? pages.first
     }
-
+    public func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, let page = pages.first(where: { $0.window === window }) else { return }
+        focusedView = page.view
+        if !restoring, let target = page.view.workspaceOrigin { store.select(target) }
+    }
+    public func installStackMenu(in menu: NSMenu, before anchor: NSMenuItem) {
+        menuAnchors[ObjectIdentifier(menu)] = anchor; menu.delegate = self
+    }
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let anchor = menuAnchors[ObjectIdentifier(menu)] else { return }
+        for item in menu.items where item.tag == 731 { menu.removeItem(item) }
+        var index = menu.index(of: anchor)
+        func insert(_ item: NSMenuItem) { item.tag = 731; menu.insertItem(item, at: index); index += 1 }
+        func stackItem(_ entry: SavedStack, action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: entry.name, action: action, keyEquivalent: "")
+            item.target = self; item.representedObject = entry.url.absoluteString
+            if entry.name != SavedStacks.defaultName(entry.url) { item.title += " · " + SavedStacks.defaultName(entry.url) }
+            item.state = entry.url == origin ? .on : .off; return item
+        }
+        let heading = NSMenuItem(title: "Your FairyStacks", action: nil, keyEquivalent: ""); insert(heading)
+        for entry in store.entries { insert(stackItem(entry, action: #selector(selectStack(_:)))) }
+        if store.entries.isEmpty { insert(NSMenuItem(title: "Add a stack from its onboarding page", action: nil, keyEquivalent: "")) }
+        let fresh = NSMenuItem(title: "Open in New Window", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for entry in store.entries { submenu.addItem(stackItem(entry, action: #selector(newStackWindow(_:)))) }
+        fresh.submenu = submenu; fresh.isEnabled = !store.entries.isEmpty; insert(fresh)
+        if let origin, origin != WorkspaceAddress.trialOrigin {
+            for (title, action) in [("Rename this stack…", #selector(renameStack)), ("Forget this stack", #selector(forgetStack))] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; insert(item)
+            }
+        }
+        insert(.separator())
+        let paired = pairedOrigin()?.absoluteString ?? "Not paired"
+        insert(NSMenuItem(title: "Mac commands · \(paired)", action: nil, keyEquivalent: ""))
+        insert(.separator())
+    }
+    @objc private func selectStack(_ item: NSMenuItem) {
+        guard let text = item.representedObject as? String, let target = WorkspaceAddress.parse(text) else { return }
+        openStack(target)
+    }
+    @objc private func newStackWindow(_ item: NSMenuItem) {
+        guard let text = item.representedObject as? String, let target = WorkspaceAddress.parse(text) else { return }
+        openStack(target, newWindow: true)
+    }
+    @objc private func renameStack() {
+        guard let origin, let entry = store.entries.first(where: { $0.url == origin }) else { return }
+        let dialog = NSAlert(); dialog.messageText = "Name this FairyStack"; dialog.informativeText = origin.absoluteString
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); field.stringValue = entry.name
+        dialog.accessoryView = field; dialog.addButton(withTitle: "Save"); dialog.addButton(withTitle: "Cancel")
+        guard dialog.runModal() == .alertFirstButtonReturn else { return }
+        guard store.rename(origin, to: field.stringValue) else { alert("Name not saved", "Use 1–80 readable characters, without control or directional formatting characters.", for: current?.window); return }
+    }
+    @objc private func forgetStack() { if let origin { store.remove(origin); persistWindows() } }
+    private func welcome() -> URL? {
+        NSApp.activate(ignoringOtherApps: true)
+        let dialog = NSAlert(); dialog.messageText = "Welcome to FairyStack"
+        dialog.informativeText = "Open your stack’s onboarding page in your browser and choose Open in FairyStack. It will appear in this Mac’s menu, ready to open whenever you need it."
+        dialog.addButton(withTitle: "Open onboarding"); dialog.addButton(withTitle: "Try FairyStack")
+        dialog.addButton(withTitle: "Add by address…"); dialog.addButton(withTitle: "Not now")
+        switch dialog.runModal().rawValue {
+        case NSApplication.ModalResponse.alertFirstButtonReturn.rawValue:
+            NSWorkspace.shared.open(URL(string: "https://fairystack.com/#existing-account")!); return nil
+        case NSApplication.ModalResponse.alertSecondButtonReturn.rawValue:
+            trialSession = WorkspaceAddress.trialOrigin; return trialSession
+        case NSApplication.ModalResponse.alertThirdButtonReturn.rawValue:
+            return askForAddress(current: nil)
+        default: return nil
+        }
+    }
     private func askForAddress(current: URL?) -> URL? {
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert(); alert.messageText = current == nil ? "Welcome to FairyStack" : "Open your FairyStack"
-        alert.informativeText = current == nil
-            ? "Try FairyStack free for an hour, or enter your own FairyStack address, for example you.fairystack.com."
-            : "Enter your FairyStack address, for example you.fairystack.com."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
-        field.stringValue = current?.absoluteString ?? ""; field.placeholderString = "https://you.fairystack.com"
+        let alert = NSAlert(); alert.messageText = "Add a stack by address"
+        alert.informativeText = "Your stack’s onboarding page has Open in FairyStack: it adds the stack to this Mac’s menu. Enter an address here only for recovery."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); field.placeholderString = "https://you.fairystack.com"
         alert.accessoryView = field; alert.window.initialFirstResponder = field
-        if current == nil { alert.addButton(withTitle: "Try FairyStack") }
-        alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-        var choice = alert.runModal()
-        if current == nil {
-            if choice == .alertFirstButtonReturn {
-                // The trial address is not saved: after the hour, the next launch asks again for the new stack.
-                trialSession = WorkspaceAddress.trialOrigin; return WorkspaceAddress.trialOrigin
-            }
-            choice = NSApplication.ModalResponse(rawValue: choice.rawValue - 1)
-        }
+        alert.addButton(withTitle: "Add"); alert.addButton(withTitle: "Cancel")
+        let choice = alert.runModal()
         guard choice == .alertFirstButtonReturn else { return nil }
-        guard let url = WorkspaceAddress.parse(field.stringValue) else {
-            let error = NSAlert(); error.messageText = "That is not a FairyStack address"
-            error.informativeText = "Use an HTTPS address with no path, like https://you.fairystack.com."; error.runModal()
-            return nil
+        guard let target = WorkspaceAddress.parse(field.stringValue), target.host != "fairystack.com", target.host != "www.fairystack.com" else {
+            self.alert("That is not a FairyStack address", "Use the HTTPS origin of your stack, without a path.", for: nil); return nil
         }
-        UserDefaults.standard.set(url.absoluteString, forKey: WorkspaceAddress.defaultsKey)
-        return url
+        register(target); return target
+    }
+    private func persistWindows() {
+        guard !restoring else { return }
+        store.windows = pages.compactMap { page in
+            guard let origin = page.view.workspaceOrigin, store.entries.contains(where: { $0.url == origin }) else { return nil }
+            let url = page.view.url.flatMap { WorkspaceAddress.sameOrigin($0, origin) ? $0 : nil } ?? origin.appendingPathComponent("workspace/")
+            return SavedStackWindow(origin: origin, url: url)
+        }
     }
 
     @discardableResult
-    private func open(_ request: URLRequest?, configuration: WKWebViewConfiguration?, activate: Bool = true) -> WorkspaceWebView {
+    private func open(_ request: URLRequest?, origin: URL, configuration: WKWebViewConfiguration?, activate: Bool = true) -> WorkspaceWebView {
         let config = configuration ?? {
             let config = WKWebViewConfiguration()
-            config.websiteDataStore = .default()
+            config.websiteDataStore = origin.host == WorkspaceAddress.trialOrigin.host ? .nonPersistent() : .default()
             config.userContentController = content
             config.applicationNameForUserAgent = "FairyStackMac/\(version)"
             config.preferences.isElementFullscreenEnabled = true
             return config
         }()
         let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 860), configuration: config)
+        view.workspaceOrigin = origin
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
         view.dragSource.failed = { [weak self, weak view] message in self?.alert("Image not saved", message, for: view?.window) }
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.tabbingMode = .disallowed
-        window.title = "FairyStack"; window.contentView = view; window.delegate = self
+        window.title = "FairyStack · \(origin.host ?? "")"; window.contentView = view; window.delegate = self
         if pages.isEmpty { if !window.setFrameUsingName("FairyStackWorkspace") { window.center() }; window.setFrameAutosaveName("FairyStackWorkspace") }
         else if let last = pages.last?.window { window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: last.frame.minX, y: last.frame.maxY))) }
-        let title = view.observe(\.title) { [weak window] view, _ in window?.title = (view.title ?? "").isEmpty ? "FairyStack" : view.title! }
+        let title = view.observe(\.title) { [weak window] view, _ in window?.title = "\((view.title ?? "").isEmpty ? "FairyStack" : view.title!) · \(origin.host ?? "")" }
         pages.append((window, view, title))
         if let request { view.load(request) }
-        UserDefaults.standard.set(true, forKey: Self.openKey)
+        if !restoring { focusedView = view; store.select(origin); persistWindows() }
+        store.defaults.set(true, forKey: Self.openKey)
         NSApp.setActivationPolicy(.regular)
         if activate { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) } else { window.orderFront(nil) }
         return view
@@ -271,36 +372,48 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, let index = pages.firstIndex(where: { $0.window === window }) else { return }
+        if terminating { return }
+        if focusedView === pages[index].view { focusedView = nil }
         pages[index].view.stopLoading(); pages.remove(at: index)
+        persistWindows()
         if pages.isEmpty {
-            if !terminating { UserDefaults.standard.set(false, forKey: Self.openKey) }
+            if !terminating { store.defaults.set(false, forKey: Self.openKey) }
             NSApp.setActivationPolicy(.accessory)
         }
     }
 
-    private func allowedInWindow(_ url: URL) -> Bool {
-        guard let origin else { return false }
+    func allowedInWindow(_ url: URL, view: WKWebView) -> Bool {
+        guard let origin = (view as? WorkspaceWebView)?.workspaceOrigin else { return false }
         if WorkspaceAddress.sameOrigin(url, origin) { return true }
-        guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
+        guard url.scheme == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
         return host == "authreturn.com" || host.hasSuffix(".authreturn.com")
     }
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == Self.dragMessage, let view = message.webView as? WorkspaceWebView,
-              let origin, message.frameInfo.isMainFrame else { return }
+              let origin = view.workspaceOrigin, message.frameInfo.isMainFrame,
+              message.frameInfo.securityOrigin.protocol == "https",
+              message.frameInfo.securityOrigin.host.lowercased() == origin.host,
+              (message.frameInfo.securityOrigin.port == (origin.port ?? 443) || (message.frameInfo.securityOrigin.port == 0 && origin.port == nil)) else { return }
         view.draggable = DraggableImage(message.body, origin: origin)
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if action.shouldPerformDownload { return decisionHandler(.download) }
         guard let url = action.request.url else { return decisionHandler(.cancel) }
-        if action.targetFrame?.isMainFrame == false || ["about", "blob", "data"].contains(url.scheme ?? "") || allowedInWindow(url) {
+        if action.shouldPerformDownload {
+            guard let origin = (webView as? WorkspaceWebView)?.workspaceOrigin, WorkspaceAddress.sameOrigin(url, origin) else { return decisionHandler(.cancel) }
+            return decisionHandler(.download)
+        }
+        if action.targetFrame?.isMainFrame == false || ["about", "blob", "data"].contains(url.scheme ?? "") || allowedInWindow(url, view: webView) {
             return decisionHandler(.allow)
         }
         NSWorkspace.shared.open(url); decisionHandler(.cancel)
     }
     public func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+        if disposition.lowercased().hasPrefix("attachment") || !response.canShowMIMEType {
+            guard let url = response.response.url, let origin = (webView as? WorkspaceWebView)?.workspaceOrigin, WorkspaceAddress.sameOrigin(url, origin) else { return decisionHandler(.cancel) }
+        }
         decisionHandler(disposition.lowercased().hasPrefix("attachment") || !response.canShowMIMEType ? .download : .allow)
     }
     public func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
@@ -312,12 +425,14 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private func loadFailed(_ webView: WKWebView, _ error: Error) {
         let error = error as NSError
         if error.code == NSURLErrorCancelled || (error.domain == "WebKitErrorDomain" && error.code == 102) { return }
-        let retry = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? origin?.appendingPathComponent("workspace/")
+        let failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+        let retry = failedURL.flatMap { allowedInWindow($0, view: webView) ? $0 : nil } ?? (webView as? WorkspaceWebView)?.workspaceOrigin?.appendingPathComponent("workspace/")
         let escape = { (text: String) in text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;") }
         let html = """
         <!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>FairyStack is unreachable</title>
-        <style>:root{color:#17211c;background:#edf7f1}@media(prefers-color-scheme:dark){:root{color:#e6efe9;background:#141c18}a{color:#9fd8b4}}
-        body{font:15px -apple-system,system-ui;margin:18vh auto;max-width:520px;padding:0 24px}a{color:#1f6b45}</style>
+        <style>:root{color:#17211c;background:#edf7f1}a{color:#1f6b45;background:transparent}
+        @media(prefers-color-scheme:dark){:root{color:#e6efe9;background:#141c18}a{color:#9fd8b4}}
+        body{font:15px -apple-system,system-ui;margin:18vh auto;max-width:520px;padding:0 24px}</style>
         <h1>FairyStack could not load</h1><p>\(escape(error.localizedDescription))</p>
         <p><a href="\(escape(retry?.absoluteString ?? "about:blank"))">Retry</a> or press ⌘R.</p>
         """
@@ -326,9 +441,11 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let url = action.request.url else { return nil }
-        guard allowedInWindow(url) else { NSWorkspace.shared.open(url); return nil }
-        return open(nil, configuration: configuration)
+        guard allowedInWindow(url, view: webView) else { NSWorkspace.shared.open(url); return nil }
+        guard let origin = (webView as? WorkspaceWebView)?.workspaceOrigin else { return nil }
+        return open(nil, origin: origin, configuration: configuration)
     }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { persistWindows() }
     public func webViewDidClose(_ webView: WKWebView) { webView.window?.close() }
     public func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel(); panel.canChooseFiles = true
@@ -358,6 +475,8 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     public func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard let url = response.url, let origin = (download.webView as? WorkspaceWebView)?.workspaceOrigin,
+              WorkspaceAddress.sameOrigin(url, origin) else { return completionHandler(nil) }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         var name = (suggestedFilename as NSString).lastPathComponent.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         if name.isEmpty { name = "download" }
@@ -368,6 +487,11 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         }
         guard !FileManager.default.fileExists(atPath: target.path) else { return completionHandler(nil) }
         downloads[ObjectIdentifier(download)] = target; completionHandler(target)
+    }
+    public func download(_ download: WKDownload, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, decisionHandler: @escaping (WKDownload.RedirectPolicy) -> Void) {
+        guard let url = request.url, let origin = (download.webView as? WorkspaceWebView)?.workspaceOrigin,
+              WorkspaceAddress.sameOrigin(url, origin) else { decisionHandler(.cancel); return }
+        decisionHandler(.allow)
     }
     public func downloadDidFinish(_ download: WKDownload) {
         guard let file = downloads.removeValue(forKey: ObjectIdentifier(download)) else { return }

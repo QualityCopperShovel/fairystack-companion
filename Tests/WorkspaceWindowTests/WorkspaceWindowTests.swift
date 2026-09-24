@@ -181,3 +181,130 @@ final class FairyIconTests: XCTestCase {
         }
     }
 }
+
+final class SavedStackTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suite: String!
+    private let second = URL(string: "https://other.fairystack.com")!
+    override func setUp() {
+        suite = "FairyStackTests." + UUID().uuidString; defaults = UserDefaults(suiteName: suite)!
+        _ = NSApplication.shared
+    }
+    override func tearDown() { defaults.removePersistentDomain(forName: suite) }
+    func testMigrationDeduplicationSelectionAndRelaunch() {
+        defaults.set("https://YOU.fairystack.com:443/", forKey: WorkspaceAddress.defaultsKey)
+        let store = SavedStacks(defaults: defaults)
+        XCTAssertEqual(store.entries.map(\.url), [origin])
+        XCTAssertNil(defaults.string(forKey: WorkspaceAddress.defaultsKey))
+        store.add(second); store.add(origin); store.add(WorkspaceAddress.parse("https://you.fairystack.com:443")!)
+        XCTAssertEqual(store.entries.count, 2)
+        XCTAssertTrue(store.rename(second, to: "Work")); store.select(second)
+        let reopened = SavedStacks(defaults: defaults)
+        XCTAssertEqual(reopened.entries, store.entries); XCTAssertEqual(reopened.selected, second)
+        XCTAssertFalse(reopened.rename(second, to: "bad\u{202E}name"))
+        XCTAssertFalse(reopened.rename(second, to: "\n"))
+    }
+    func testPairingFallbackAndTrialAreNotAnAccountDirectory() {
+        let store = SavedStacks(defaults: defaults)
+        store.migrate(pairedOrigin: origin); XCTAssertEqual(store.entries.map(\.url), [origin])
+        store.add(second); store.migrate(pairedOrigin: URL(string: "https://unknown.fairystack.com")!)
+        XCTAssertEqual(store.entries.count, 2)
+        store.remove(origin); store.remove(second)
+        SavedStacks(defaults: defaults).migrate(pairedOrigin: origin)
+        XCTAssertTrue(SavedStacks(defaults: defaults).entries.isEmpty, "forget must survive pairing fallback")
+        defaults.set(WorkspaceAddress.trialOrigin.absoluteString, forKey: WorkspaceAddress.defaultsKey)
+        let trial = SavedStacks(defaults: defaults); trial.add(WorkspaceAddress.trialOrigin)
+        trial.windows = [SavedStackWindow(origin: WorkspaceAddress.trialOrigin, url: WorkspaceAddress.trialOrigin)]
+        XCTAssertTrue(trial.entries.isEmpty); XCTAssertTrue(trial.windows.isEmpty)
+        XCTAssertNil(defaults.string(forKey: WorkspaceAddress.defaultsKey))
+    }
+    func testDuplicateAndMalformedHandoffsNeverResolve() {
+        for query in ["origin=https://you.fairystack.com&origin=https://other.fairystack.com", "origin=https://you.fairystack.com&name=Trusted", "origin=https://you.fairystack.com&token=secret"] {
+            XCTAssertNil(WorkspaceAddress.fromOpenURL(URL(string: "fairystack://open?" + query)!))
+        }
+        for text in ["fairystack://open/path?origin=https://you.fairystack.com", "fairystack://user@open?origin=https://you.fairystack.com", "fairystack://open?origin=https://you.fairystack.com#bad"] {
+            XCTAssertNil(WorkspaceAddress.fromOpenURL(URL(string: text)!))
+        }
+    }
+    func testMultipleWindowsKeepTheirOriginsAndRestoreTogether() {
+        let store = SavedStacks(defaults: defaults); store.add(origin); store.add(second)
+        let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        let a = windows.openStack(origin, activate: false), b = windows.openStack(second, activate: false)
+        a.stopLoading(); b.stopLoading()
+        XCTAssertFalse(a === b)
+        XCTAssertTrue(windows.openStack(origin, activate: false) === a, "switch focuses without navigating or discarding drafts")
+        let another = windows.openStack(origin, newWindow: true, activate: false); another.stopLoading()
+        XCTAssertFalse(another === a); XCTAssertEqual(another.workspaceOrigin, origin)
+        XCTAssertTrue(windows.allowedInWindow(origin, view: a)); XCTAssertFalse(windows.allowedInWindow(second, view: a))
+        XCTAssertTrue(windows.allowedInWindow(second, view: b)); XCTAssertFalse(windows.allowedInWindow(origin, view: b))
+        XCTAssertNotNil(DraggableImage(descriptor(), origin: a.workspaceOrigin!))
+        XCTAssertNil(DraggableImage(descriptor(), origin: b.workspaceOrigin!))
+        XCTAssertTrue(a.window!.title.contains("you.fairystack.com")); XCTAssertTrue(b.window!.title.contains("other.fairystack.com"))
+        let trial = windows.openStack(WorkspaceAddress.trialOrigin, newWindow: true, activate: false); trial.stopLoading()
+        XCTAssertFalse(trial.configuration.websiteDataStore.isPersistent)
+        windows.terminating = true
+        let records = SavedStacks(defaults: defaults).windows
+        XCTAssertEqual(records.map(\.origin), [origin, second, origin], "trial never restores")
+        for view in [a, b, another, trial] { view.window?.close() }
+        let next = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        next.adopt([]); next.restore()
+        XCTAssertEqual(SavedStacks(defaults: defaults).windows.map(\.origin), records.map(\.origin))
+        let reopenedA = next.openStack(origin, activate: false), reopenedB = next.openStack(second, activate: false)
+        XCTAssertEqual(reopenedA.workspaceOrigin, origin); XCTAssertEqual(reopenedB.workspaceOrigin, second)
+        XCTAssertEqual(SavedStacks(defaults: defaults).windows.count, 3)
+        // Closing one window removes only its record. Quit keeps the remaining records intact.
+        reopenedB.window?.close(); XCTAssertEqual(SavedStacks(defaults: defaults).windows.count, 2)
+        next.terminating = true
+        for window in NSApp.windows where window.contentView is WorkspaceWebView { window.close() }
+    }
+    func testSwitchingStacksPreservesTheLiveDraftAndSelection() {
+        let store = SavedStacks(defaults: defaults); store.add(origin); store.add(second)
+        let manager = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        let a = manager.openStack(origin, activate: false); a.stopLoading()
+        let loaded = expectation(description: "draft fixture loaded")
+        let delegate = LoadWaiter { loaded.fulfill() }; a.navigationDelegate = delegate
+        a.loadHTMLString("<textarea id='draft'>My unsent draft</textarea><p id='evidence' tabindex='0'>Selected evidence</p>", baseURL: origin)
+        wait(for: [loaded], timeout: 15); a.navigationDelegate = manager
+        func evaluate(_ script: String) -> [String]? {
+            let checked = expectation(description: "read WebKit state")
+            var state: [String]?
+            a.evaluateJavaScript(script) { result, error in
+                XCTAssertNil(error); state = result as? [String]; checked.fulfill()
+            }
+            wait(for: [checked], timeout: 10); return state
+        }
+        // WebKit has one DOM range. Clear it before adding our range, and assert
+        // the fixture really selected text before exercising the stack switch.
+        let selected = ["My unsent draft", "Selected evidence", "evidence"]
+        XCTAssertEqual(evaluate("evidence.focus(); const range=document.createRange(); range.selectNodeContents(evidence); getSelection().removeAllRanges(); getSelection().addRange(range); [draft.value, String(getSelection()), document.activeElement.id]"), selected)
+        let b = manager.openStack(second, activate: false); b.stopLoading()
+        XCTAssertTrue(manager.openStack(origin, activate: false) === a)
+        XCTAssertEqual(evaluate("[draft.value, String(getSelection()), document.activeElement.id]"), selected)
+        // Input focus/caret and rendered-text selection are separate browser states.
+        let focused = ["My unsent draft", "draft", "3", "6"]
+        XCTAssertEqual(evaluate("draft.focus(); draft.setSelectionRange(3,6); [draft.value, document.activeElement.id, String(draft.selectionStart), String(draft.selectionEnd)]"), focused)
+        XCTAssertTrue(manager.openStack(second, activate: false) === b)
+        XCTAssertTrue(manager.openStack(origin, activate: false) === a)
+        XCTAssertEqual(evaluate("[draft.value, document.activeElement.id, String(draft.selectionStart), String(draft.selectionEnd)]"), focused)
+        a.window?.close(); b.window?.close()
+    }
+    func testMenuListsStacksDirectlyAndEachHasANewWindowAction() {
+        let store = SavedStacks(defaults: defaults); store.add(origin); store.add(second)
+        let manager = WorkspaceWindows(version: "test", pairedOrigin: { origin }, defaults: defaults)
+        let menu = NSMenu(), anchor = NSMenuItem(title: "Open", action: nil, keyEquivalent: "")
+        menu.addItem(anchor); manager.installStackMenu(in: menu, before: anchor); manager.menuNeedsUpdate(menu)
+        let rows = menu.items.filter { $0.representedObject is String }
+        XCTAssertEqual(rows.map(\.title), ["you.fairystack.com", "other.fairystack.com"])
+        XCTAssertEqual(rows.map(\.state), [.off, .on])
+        let newWindows = menu.items.first { $0.title == "Open in New Window" }!.submenu!
+        XCTAssertEqual(newWindows.items.count, 2)
+        XCTAssertTrue(menu.items.contains { $0.title == "Mac commands · https://you.fairystack.com" })
+        manager.menuNeedsUpdate(menu); XCTAssertEqual(menu.items.filter { $0.representedObject is String }.count, 2)
+    }
+    func testRestorationRejectsOtherOriginsAndForgottenStacks() {
+        let store = SavedStacks(defaults: defaults); store.add(origin)
+        store.windows = [SavedStackWindow(origin: origin, url: second), SavedStackWindow(origin: second, url: second), SavedStackWindow(origin: origin, url: origin)]
+        XCTAssertEqual(store.windows.count, 1)
+        store.remove(origin); XCTAssertTrue(store.windows.isEmpty)
+    }
+}

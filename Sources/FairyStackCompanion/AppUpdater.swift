@@ -9,7 +9,7 @@ final class AppUpdater {
     private let status: (String) -> Void
     private let installed: () -> Void
     private var timer: Timer?
-    private let updates = UpdateAdmission(currentVersion: "1.5.1")
+    private let updates = UpdateAdmission(currentVersion: "1.6.0")
     init(status: @escaping (String) -> Void, installed: @escaping () -> Void) { self.status = status; self.installed = installed }
     var stagedVersion: String? { updates.stagedVersion }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }

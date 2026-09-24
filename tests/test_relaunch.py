@@ -64,13 +64,13 @@ class RelaunchWiringTests(unittest.TestCase):
         self.assertNotIn('application?.terminate()', MAIN)
         self.assertIn('do { try helper.run() } catch { failed(); return }', MAIN)
         window = (ROOT / 'Sources/WorkspaceWindow/WorkspaceWindows.swift').read_text()
-        self.assertIn('WorkspaceAddress.sameOrigin(url, origin)', window.split('public var resumeArguments')[1].split('}')[0])
-        self.assertIn('open(URLRequest(url: url, timeoutInterval: 30), configuration: nil, activate: activateOnResume)', window)
+        self.assertIn('persistWindows()', window.split('public var resumeArguments')[1].split('}')[0])
+        self.assertIn('open(URLRequest(url: url, timeoutInterval: 30), origin: stack.url, configuration: nil, activate: activateOnResume)', window)
 
     def test_quitting_does_not_record_the_window_as_closed(self):
         # 1.3.0 CI evidence: AppKit closed the window while quitting for an update, the close
         # handler saved workspaceWindowOpen = false, and the relaunched build stayed menu-bar only.
         window = (ROOT / 'Sources/WorkspaceWindow/WorkspaceWindows.swift').read_text()
         close = window.split('public func windowWillClose')[1].split('\n    }\n')[0]
-        self.assertIn('if !terminating { UserDefaults.standard.set(false, forKey: Self.openKey) }', close)
+        self.assertLess(close.index('if terminating { return }'), close.index('pages.remove(at: index)'))
         self.assertIn('workspace.terminating = true', MAIN.split('func applicationShouldTerminate')[1].split('}')[0])

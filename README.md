@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.5.1
+# FairyStack for Mac 1.6.0
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -24,11 +24,24 @@ the page announces the hovered image with a short-lived signed link, and the app
 downloads it through a file promise (two-minute limit; failures show an alert).
 A plain click still opens the image viewer. Downloads go to ~/Downloads.
 Download the signed disk image, drag FairyStack to Applications and open it. On first
-launch it asks for your FairyStack address. Your stack's Mac page can also hand the
-address over with a `fairystack://open?origin=https://…` link, which the app always
-confirms before switching. Opened straight from the disk image, it offers to move
-itself to Applications so it can update. The Terminal installer passes the address
-directly. Change it from the FairyStack menu.
+launch opens onboarding or offers a temporary trial. In your stack’s onboarding or Mac
+page, choose **Open in FairyStack** and confirm the full origin in the native dialog.
+This adds a local saved stack, without transferring credentials or pairing commands.
+Sign in to each stack in its own window if asked. The fairy icon in the macOS menu bar
+lists all saved stacks directly; selecting one focuses its window or opens it. **Open
+in New Window** lists the same stacks and can open a second window for any of them.
+Switching stacks leaves other windows and their drafts intact. ⌘N opens another window
+for the current stack. Window titles show their own host; reloads, navigation, image
+drags and downloads stay bound to that window’s origin. Relaunch restores the saved
+non-trial windows. Trial windows use temporary WebKit storage and never restore.
+
+The menu also offers Rename and Forget for the current stack. Forget removes its
+bookmark and restoration record while leaving its open windows and login intact.
+**Add stack by address** is a recovery option. Existing single-address installations
+migrate automatically; an old command-paired origin is a one-time fallback when there
+is no saved address. Saved stacks are local bookmarks, not a cross-instance account
+directory. Opened straight from the disk image, the app offers to move itself to
+Applications so it can update. The Terminal installer passes the address directly.
 
 Pair from the app's fairy menu-bar icon after creating a code at your control origin's
 `/companions`. The app uses its own Keychain service and requires explicit local
