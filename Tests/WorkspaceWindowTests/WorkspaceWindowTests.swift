@@ -151,3 +151,22 @@ private final class LoadWaiter: NSObject, WKNavigationDelegate {
     init(_ done: @escaping () -> Void) { self.done = done }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { done() }
 }
+
+final class FairyIconTests: XCTestCase {
+    func testMenuBarFairyIsATemplateWithWingsOrbAndSparkles() throws {
+        let icon = FairyIcon.menuBar()
+        XCTAssertTrue(icon.isTemplate); XCTAssertEqual(icon.size, NSSize(width: 18, height: 18))
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 72, pixelsHigh: 72, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        icon.draw(in: NSRect(x: 0, y: 0, width: 72, height: 72)); NSGraphicsContext.restoreGraphicsState()
+        // Bitmap rows run top-down: orb at the bottom centre, wings above it, sparkles low on each side, clear corners.
+        func ink(_ x: Double, _ yUp: Double) -> Bool { (rep.colorAt(x: Int(x * 4), y: Int((18 - yUp) * 4))?.alphaComponent ?? 0) > 0.5 }
+        XCTAssertTrue(ink(9, 5), "orb"); XCTAssertTrue(ink(4.6, 13.6), "left wing"); XCTAssertTrue(ink(13.4, 13.6), "right wing")
+        XCTAssertTrue(ink(1.9, 4.2), "left sparkle"); XCTAssertTrue(ink(16.1, 4.2), "right sparkle")
+        XCTAssertFalse(ink(0.5, 17.5)); XCTAssertFalse(ink(9, 9.6), "gap between orb and wings")
+        if let folder = ProcessInfo.processInfo.environment["ICON_PREVIEW_DIR"] {
+            try rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: folder).appendingPathComponent("menubar-fairy@4x.png"))
+        }
+    }
+}

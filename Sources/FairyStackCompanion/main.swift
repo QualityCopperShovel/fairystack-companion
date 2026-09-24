@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let companionVersion = "1.1.0"
+let companionVersion = "1.1.1"
 
 final class CompanionDelegate: NSObject, NSApplicationDelegate {
     private let commands = FairyStackCommands()
@@ -14,7 +14,7 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { self?.updateItem.title = text }
     }, installed: { [weak self] in self?.restart() })
     func applicationDidFinishLaunching(_ notification: Notification) {
-        status.button?.image = NSImage(systemSymbolName: "link", accessibilityDescription: "FairyStack Companion")
+        status.button?.image = FairyIcon.menuBar()
         let menu = NSMenu()
         let title = NSMenuItem(title: "FairyStack Companion · \(companionVersion)", action: nil, keyEquivalent: "")
         let open = NSMenuItem(title: "Open FairyStack window", action: #selector(WorkspaceWindows.show), keyEquivalent: "")

@@ -20,10 +20,14 @@ class StandaloneProductTests(unittest.TestCase):
     def test_companion_icon_is_distinct_from_main_app(self):
         import hashlib
         source=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
-        self.assertIn('systemSymbolName: "link"',source)
+        self.assertIn('status.button?.image = FairyIcon.menuBar()',source,'the menu bar shows the FairyStack fairy, not a generic link')
+        self.assertNotIn('systemSymbolName: "link"',source)
         self.assertNotIn('systemSymbolName: "leaf.fill"',source)
+        self.assertIn('image.isTemplate = true',(ROOT/'Sources/WorkspaceWindow/FairyIcon.swift').read_text())
         old_leaf_digest='68d37ee086925d81d2b001f9c006519d40679c8127f0c80cdd93c55e96ae88f3'
-        self.assertNotEqual(hashlib.sha256((ROOT/'Resources/AppIcon.png').read_bytes()).hexdigest(),old_leaf_digest)
+        digest=hashlib.sha256((ROOT/'Resources/AppIcon.png').read_bytes()).hexdigest()
+        self.assertNotEqual(digest,old_leaf_digest)
+        self.assertNotEqual(digest,'5d5376c701e5a995103764ff2a251090773fccc7895c50c8b0ce6fdb39ca1c34','retired generic link icon')
 
 
 class WorkspaceWindowTests(unittest.TestCase):

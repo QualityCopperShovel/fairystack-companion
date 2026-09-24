@@ -1,4 +1,4 @@
-# FairyStack Companion 1.1.0
+# FairyStack Companion 1.1.1
 
 Menu-bar client for macOS 13+, bundle com.fairystack.companion. It opens your
 FairyStack in a native window and can optionally run agent commands on this Mac.
@@ -16,7 +16,7 @@ in FairyStack's live agent guide, Mac companions section.
 
 ## FairyStack window
 
-Link menu → Open FairyStack window shows your FairyStack (https origin only) in a
+Fairy menu-bar icon → Open FairyStack window shows your FairyStack (https origin only) in a
 WebKit window with its own Dock icon while open. Other sites open in your default
 browser. Drag a conversation image to Finder to save the full-resolution original:
 the page announces the hovered image with a short-lived signed link, and the app
@@ -25,7 +25,7 @@ A plain click still opens the image viewer. Downloads go to ~/Downloads.
 The installer passes your FairyStack address on first launch; change it from the
 FairyStack menu.
 
-Pair from the app's link menu after creating a code at your control origin's
+Pair from the app's fairy menu-bar icon after creating a code at your control origin's
 `/companions`. The app uses its own Keychain service and requires explicit local
 workspace selection. The folder sets a working directory, not a sandbox.
 Commands run as the logged-in Mac user, with no interactive password or elevated
@@ -78,6 +78,7 @@ that policy and the bundle/Keychain identities before distributing their own app
 See PROTOCOL.md for pairing, commands, timeouts, disconnection and revocation.
 The server and account service are separate from this open-source client.
 
-Version 1.1.0 adds the FairyStack window. The installer upgrades an older verified
+Version 1.1.1 replaces the generic link icon with FairyStack's fairy in the Dock and
+menu bar. Version 1.1.0 added the FairyStack window. The installer upgrades an older verified
 installation in place when the app is not running, because the 1.0.1 updater
 cannot verify its own replacement.

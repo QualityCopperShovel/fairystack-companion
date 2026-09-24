@@ -11,7 +11,7 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-DIGEST = '9021f6e186a82d8c7f8fa8bc546f0a549da53f8770a028d9442da4ce4a9c3e7a'
+DIGEST = '2cd66647e9ded2842693a1cc01818cc1ce7d4c80c1e55b788edf311342a7d0b1'
 
 
 class InstallerTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class InstallerTests(unittest.TestCase):
                 assert Path(args[-1]).is_dir()
             elif cmd=='spctl': assert args[:3]==['--assess','--type','execute']
             elif cmd=='open': pass
-            elif cmd=='defaults': print(os.environ.get('INSTALLED_VERSION','1.1.0'))
+            elif cmd=='defaults': print(os.environ.get('INSTALLED_VERSION','1.1.1'))
             elif cmd=='pgrep': sys.exit(0 if os.environ.get('RUNNING') else 1)
             else: sys.exit(5)
         '''))
@@ -149,7 +149,7 @@ class InstallerTests(unittest.TestCase):
         result=self.run_installer(INSTALLED_VERSION='1.0.1')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(sentinel.exists());self.assertTrue((self.target/'Contents/MacOS/FairyStackCompanion').exists())
-        self.assertIn('Updated FairyStack Companion 1.0.1 to 1.1.0',result.stdout);self.assert_clean()
+        self.assertIn('Updated FairyStack Companion 1.0.1 to 1.1.1',result.stdout);self.assert_clean()
         calls=(self.root/'calls').read_text()
         self.assertEqual(calls.count('codesign '),2,'both the old and the replacement app are verified')
         self.assertIn("'--fairystack-origin', 'https://customer.fairystack.com'",calls)

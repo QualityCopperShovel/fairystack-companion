@@ -19,4 +19,4 @@ error. A lock rejects overlapping installs. A hard-killed installer may leave an
 empty lock directory; the error prints its location for deliberate removal.
 
 Pairing is a local consent step: create a code on your account page, paste it in
-the link menu’s FairyStack commands: Off… entry, and choose a working folder.
+the fairy menu-bar icon’s FairyStack commands: Off… entry, and choose a working folder.

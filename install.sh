@@ -62,14 +62,14 @@ companion_install() (
     step='checking Gatekeeper approval'
     run 45 spctl --assess --type execute --verbose "$1"
   }
-  version='1.1.0'
+  version='1.1.1'
   fetch() {
     work=$(mktemp -d "$apps/.fairystack-companion.XXXXXX")
     step='downloading FairyStack Companion'
     printf 'Downloading FairyStack Companion %s…\n' "$version"
     run 125 curl --fail --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 -o "$work/companion.zip" "https://fairystack.com/assets/FairyStack-Companion-$version.zip"
     step='checking the download checksum'
-    (cd "$work"; printf '%s\n' '9021f6e186a82d8c7f8fa8bc546f0a549da53f8770a028d9442da4ce4a9c3e7a  companion.zip' > checksum)
+    (cd "$work"; printf '%s\n' '2cd66647e9ded2842693a1cc01818cc1ce7d4c80c1e55b788edf311342a7d0b1  companion.zip' > checksum)
     run 10 bash -c 'cd "$1" && shasum -a 256 -c checksum' _ "$work"
     step='unpacking the app'
     run 30 ditto -x -k "$work/companion.zip" "$work"
@@ -112,6 +112,6 @@ companion_install() (
   run 15 open -a "$target" --args --fairystack-origin "$origin"
   step='opening your pairing page'
   run 15 open "$origin/companions#pair"
-  printf 'Installed and opened: %s\nFairyStack opens in its own window. To let agents run commands on this Mac, create a code on the pairing page, paste it in the link menu → FairyStack commands: Off…, and choose a workspace.\n' "$target"
+  printf 'Installed and opened: %s\nFairyStack opens in its own window. To let agents run commands on this Mac, create a code on the pairing page, paste it in the fairy menu-bar icon → FairyStack commands: Off…, and choose a workspace.\n' "$target"
 )
 companion_install "$@"
