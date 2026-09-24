@@ -8,6 +8,8 @@ import WebKit
 
 enum WorkspaceAddress {
     static let defaultsKey = "workspaceOrigin"
+    /// The public one-hour trial; fairystack.com's Try it button downloads this app to reach it.
+    static let trialOrigin = URL(string: "https://trial-01.fairystack.com")!
     static func parse(_ text: String) -> URL? {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !value.contains("://") { value = "https://" + value }
@@ -144,16 +146,35 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public init(version: String, pairedOrigin: @escaping () -> URL?) { self.version = version; self.pairedOrigin = pairedOrigin }
 
+    /// Set only for this launch when the owner chooses the trial.
+    private var trialSession: URL?
     var origin: URL? {
-        UserDefaults.standard.string(forKey: WorkspaceAddress.defaultsKey).flatMap(WorkspaceAddress.parse) ?? pairedOrigin()
+        UserDefaults.standard.string(forKey: WorkspaceAddress.defaultsKey).flatMap(WorkspaceAddress.parse) ?? pairedOrigin() ?? trialSession
     }
+    /// Arguments that let a relaunched build reopen exactly what this one shows.
+    public var resumeArguments: [String] {
+        guard let page = current, let url = page.view.url, let origin, WorkspaceAddress.sameOrigin(url, origin) else { return [] }
+        return ["--fairystack-resume", url.absoluteString] + (NSApp.isActive ? ["--fairystack-activate"] : [])
+    }
+    private var resumeURL: URL?
+    private var activateOnResume = false
     public func adopt(_ arguments: [String]) {
+        if let index = arguments.firstIndex(of: "--fairystack-resume"), index + 1 < arguments.count,
+           let url = URL(string: arguments[index + 1]), let origin, WorkspaceAddress.sameOrigin(url, origin) {
+            resumeURL = url; activateOnResume = arguments.contains("--fairystack-activate")
+        }
         guard let index = arguments.firstIndex(of: "--fairystack-origin"), index + 1 < arguments.count,
               UserDefaults.standard.string(forKey: WorkspaceAddress.defaultsKey) == nil,
               let url = WorkspaceAddress.parse(arguments[index + 1]), url.host != "fairystack.com" else { return }
         UserDefaults.standard.set(url.absoluteString, forKey: WorkspaceAddress.defaultsKey)
     }
     public func restore() {
+        if let url = resumeURL {
+            // An update relaunch: reopen the same page, in front only if the old build was.
+            resumeURL = nil
+            open(URLRequest(url: url, timeoutInterval: 30), configuration: nil, activate: activateOnResume)
+            return
+        }
         if origin != nil && UserDefaults.standard.object(forKey: Self.openKey) as? Bool != false { show() }
     }
     /// First launch from a download has no address yet: ask for it instead of sitting silently in the menu bar.
@@ -191,13 +212,24 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     private func askForAddress(current: URL?) -> URL? {
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert(); alert.messageText = "Open your FairyStack"
-        alert.informativeText = "Enter your FairyStack address, for example you.fairystack.com."
+        let alert = NSAlert(); alert.messageText = current == nil ? "Welcome to FairyStack" : "Open your FairyStack"
+        alert.informativeText = current == nil
+            ? "Try FairyStack free for an hour, or enter your own FairyStack address, for example you.fairystack.com."
+            : "Enter your FairyStack address, for example you.fairystack.com."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.stringValue = current?.absoluteString ?? ""; field.placeholderString = "https://you.fairystack.com"
         alert.accessoryView = field; alert.window.initialFirstResponder = field
+        if current == nil { alert.addButton(withTitle: "Try FairyStack") }
         alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        var choice = alert.runModal()
+        if current == nil {
+            if choice == .alertFirstButtonReturn {
+                // The trial address is not saved: after the hour, the next launch asks again for the new stack.
+                trialSession = WorkspaceAddress.trialOrigin; return WorkspaceAddress.trialOrigin
+            }
+            choice = NSApplication.ModalResponse(rawValue: choice.rawValue - 1)
+        }
+        guard choice == .alertFirstButtonReturn else { return nil }
         guard let url = WorkspaceAddress.parse(field.stringValue) else {
             let error = NSAlert(); error.messageText = "That is not a FairyStack address"
             error.informativeText = "Use an HTTPS address with no path, like https://you.fairystack.com."; error.runModal()
@@ -208,7 +240,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     @discardableResult
-    private func open(_ request: URLRequest?, configuration: WKWebViewConfiguration?) -> WorkspaceWebView {
+    private func open(_ request: URLRequest?, configuration: WKWebViewConfiguration?, activate: Bool = true) -> WorkspaceWebView {
         let config = configuration ?? {
             let config = WKWebViewConfiguration()
             config.websiteDataStore = .default()
@@ -231,7 +263,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         if let request { view.load(request) }
         UserDefaults.standard.set(true, forKey: Self.openKey)
         NSApp.setActivationPolicy(.regular)
-        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        if activate { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) } else { window.orderFront(nil) }
         return view
     }
 

@@ -21,6 +21,9 @@ final class AddressAndDescriptorTests: XCTestCase {
             XCTAssertNil(WorkspaceAddress.parse(bad), bad)
         }
     }
+    func testTrialOriginIsAValidStackAddress() {
+        XCTAssertEqual(WorkspaceAddress.parse(WorkspaceAddress.trialOrigin.absoluteString), WorkspaceAddress.trialOrigin)
+    }
     func testOpenLinksCarryOnlyAStackOrigin() {
         XCTAssertEqual(WorkspaceAddress.fromOpenURL(URL(string: "fairystack://open?origin=https%3A%2F%2Fyou.fairystack.com")!)?.absoluteString, "https://you.fairystack.com")
         for bad in ["fairystack://open?origin=https://fairystack.com", "fairystack://open?origin=http://you.fairystack.com",

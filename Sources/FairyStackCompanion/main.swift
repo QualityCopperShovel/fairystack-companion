@@ -2,12 +2,21 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.3.0"
+let appVersion = "1.5.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
 let legacyBundleName = "FairyStack Companion.app"
 let loginItemArgument = "--fairystack-login-item"
+/// Waits for the old process to exit (killing it after 10 s), then opens the new build, retrying twice.
+/// $1 old pid, $2 open executable, $3 bundle, then app arguments. Detached, so it outlives this process.
+let relaunchScript = """
+pid=$1; opener=$2; bundle=$3; shift 3
+deadline=$(($(date +%s) + 10))
+while kill -0 "$pid" 2>/dev/null; do [ "$(date +%s)" -ge "$deadline" ] && { kill -9 "$pid" 2>/dev/null; sleep 0.5; break; }; sleep 0.1; done
+for attempt in 1 2 3; do "$opener" -n -g "$bundle" --args "$@" && exit 0; sleep 2; done
+exit 1
+"""
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let commands = FairyStackCommands()
@@ -136,23 +145,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshLogin()
     }
     private func restart() {
-        commands.stop()
-        relaunch(Bundle.main.bundleURL, arguments: []) { [weak self] in self?.updateItem.title = "Update installed · quit and reopen to finish" }
+        relaunch(Bundle.main.bundleURL, arguments: workspace.resumeArguments) { [weak self] in self?.updateItem.title = "Update installed · quit and reopen to finish" }
     }
-    /// Opens a new instance of `bundle` and quits this one; calls `failed` if it does not start within 15 s.
+    /// Quits, then a detached helper opens `bundle` once this process is gone. Old and new builds never
+    /// run side by side, and no deadline can kill a new build that is slow to pass its first-launch checks.
     private func relaunch(_ bundle: URL, arguments: [String], failed: @escaping () -> Void) {
-        let config = NSWorkspace.OpenConfiguration(); config.createsNewApplicationInstance = true; config.activates = false; config.arguments = arguments
-        var finished = false
-        let deadline = DispatchWorkItem { if !finished { finished = true; failed() } }
-        DispatchQueue.main.asyncAfter(deadline: .now()+15, execute: deadline)
-        NSWorkspace.shared.openApplication(at: bundle, configuration: config) { application,error in
-            DispatchQueue.main.async {
-                guard !finished else { application?.terminate(); return }
-                finished = true; deadline.cancel()
-                if error == nil, let application, application.processIdentifier != ProcessInfo.processInfo.processIdentifier { NSApp.terminate(nil) }
-                else { failed() }
-            }
-        }
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", relaunchScript, "fairystack-relaunch", String(ProcessInfo.processInfo.processIdentifier), "/usr/bin/open", bundle.path] + arguments
+        helper.standardInput = FileHandle.nullDevice; helper.standardOutput = FileHandle.nullDevice; helper.standardError = FileHandle.nullDevice
+        do { try helper.run() } catch { failed(); return }
+        commands.stop(); NSApp.terminate(nil)
     }
     @objc private func quit() { commands.stop(); NSApp.terminate(nil) }
 }

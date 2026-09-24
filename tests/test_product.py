@@ -41,6 +41,11 @@ class StandaloneProductTests(unittest.TestCase):
         self.assertIn('self.workspace.welcomeIfNeeded()',main,'first launch asks for an address')
         self.assertIn('current.path.hasPrefix("/Volumes/") || current.path.contains("/AppTranslocation/")',main)
         self.assertLess(main.index('offerMoveToApplications()'),main.index('adoptBundleName()'))
+    def test_welcome_offers_the_same_trial_as_the_landing_page(self):
+        window=(ROOT/'Sources/WorkspaceWindow/WorkspaceWindows.swift').read_text()
+        self.assertIn('static let trialOrigin = URL(string: "https://trial-01.fairystack.com")!',window)
+        self.assertIn('if current == nil { alert.addButton(withTitle: "Try FairyStack") }',window)
+        self.assertIn('?? pairedOrigin() ?? trialSession',window,'the trial is navigable but never saved as the address')
     def test_legacy_bundle_moves_once_then_relaunches(self):
         main=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
         self.assertIn('guard let renamed = adoptBundleName() else { finishLaunching(updates: true); return }',main)
