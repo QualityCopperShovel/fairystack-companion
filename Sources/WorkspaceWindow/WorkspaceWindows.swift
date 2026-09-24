@@ -17,6 +17,13 @@ enum WorkspaceAddress {
         var origin = URLComponents(); origin.scheme = "https"; origin.host = host; origin.port = parts.port
         return origin.url
     }
+    /// fairystack://open?origin=https://you.fairystack.com — how a stack's Mac page hands its address to a downloaded app.
+    static func fromOpenURL(_ url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "fairystack", url.host?.lowercased() == "open",
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "origin" })?.value,
+              let origin = parse(value), origin.host != "fairystack.com" else { return nil }
+        return origin
+    }
     static func sameOrigin(_ url: URL, _ origin: URL) -> Bool {
         url.scheme == "https" && url.host?.lowercased() == origin.host && url.port == origin.port
     }
@@ -148,6 +155,24 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
     public func restore() {
         if origin != nil && UserDefaults.standard.object(forKey: Self.openKey) as? Bool != false { show() }
+    }
+    /// First launch from a download has no address yet: ask for it instead of sitting silently in the menu bar.
+    public func welcomeIfNeeded() {
+        if origin == nil && pages.isEmpty { show() }
+    }
+    public func handleOpenURL(_ url: URL) {
+        guard let target = WorkspaceAddress.fromOpenURL(url) else { alert("Link not opened", "That FairyStack link is not a valid address.", for: nil); return }
+        if target != origin {
+            NSApp.activate(ignoringOtherApps: true)
+            // Any web page can open this link, so switching addresses needs the owner's consent.
+            let confirm = NSAlert(); confirm.messageText = "Open FairyStack at \(target.host ?? "")?"
+            confirm.informativeText = "The FairyStack window will use this address from now on. Continue only if you started this from your own FairyStack."
+            confirm.addButton(withTitle: "Open"); confirm.addButton(withTitle: "Cancel")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+            UserDefaults.standard.set(target.absoluteString, forKey: WorkspaceAddress.defaultsKey)
+            for page in pages { page.window.close() }
+        }
+        show()
     }
     @objc public func show() {
         if let page = pages.first { NSApp.setActivationPolicy(.regular); page.window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }

@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.2.0
+# FairyStack for Mac 1.3.0
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -23,8 +23,12 @@ browser. Drag a conversation image to Finder to save the full-resolution origina
 the page announces the hovered image with a short-lived signed link, and the app
 downloads it through a file promise (two-minute limit; failures show an alert).
 A plain click still opens the image viewer. Downloads go to ~/Downloads.
-The installer passes your FairyStack address on first launch; change it from the
-FairyStack menu.
+Download the signed disk image, drag FairyStack to Applications and open it. On first
+launch it asks for your FairyStack address. Your stack's Mac page can also hand the
+address over with a `fairystack://open?origin=https://…` link, which the app always
+confirms before switching. Opened straight from the disk image, it offers to move
+itself to Applications so it can update. The Terminal installer passes the address
+directly. Change it from the FairyStack menu.
 
 Pair from the app's fairy menu-bar icon after creating a code at your control origin's
 `/companions`. The app uses its own Keychain service and requires explicit local

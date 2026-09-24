@@ -1,4 +1,5 @@
-FairyStack for Mac: install and open with one Terminal command on macOS 13+.
+FairyStack for Mac, macOS 13+. Download the disk image from your FairyStack's Mac page
+and drag FairyStack to Applications, or install and open it with one Terminal command:
 
 (set -o pipefail; curl --fail --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 30 https://fairystack.com/assets/install-companion.sh | /bin/bash -s --)
 

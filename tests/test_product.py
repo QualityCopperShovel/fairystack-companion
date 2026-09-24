@@ -31,6 +31,16 @@ class StandaloneProductTests(unittest.TestCase):
         self.assertIn('https://fairystack.com/assets/mac-version.json',updater,'the legacy manifest only bridges pre-1.2 builds')
         visible='\n'.join(p.read_text() for p in (ROOT/'Sources').rglob('*.swift')).replace('let legacyBundleName = "FairyStack Companion.app"','')
         self.assertNotIn('FairyStack Companion',visible)
+    def test_downloaded_app_opens_from_its_page_and_offers_to_move(self):
+        info=plistlib.loads((ROOT/'Info.plist').read_bytes())
+        self.assertEqual(info['CFBundleURLTypes'][0]['CFBundleURLSchemes'],['fairystack'])
+        main=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
+        window=(ROOT/'Sources/WorkspaceWindow/WorkspaceWindows.swift').read_text()
+        self.assertIn('urls.forEach(workspace.handleOpenURL)',main)
+        self.assertIn('guard confirm.runModal() == .alertFirstButtonReturn else { return }',window,'a web link never switches the address silently')
+        self.assertIn('self.workspace.welcomeIfNeeded()',main,'first launch asks for an address')
+        self.assertIn('current.path.hasPrefix("/Volumes/") || current.path.contains("/AppTranslocation/")',main)
+        self.assertLess(main.index('offerMoveToApplications()'),main.index('adoptBundleName()'))
     def test_legacy_bundle_moves_once_then_relaunches(self):
         main=(ROOT/'Sources/FairyStackCompanion/main.swift').read_text()
         self.assertIn('guard let renamed = adoptBundleName() else { finishLaunching(updates: true); return }',main)

@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.2.0"
+let appVersion = "1.3.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -18,7 +18,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var updater = AppUpdater(status: { [weak self] text in
         DispatchQueue.main.async { self?.updateItem.title = text }
     }, installed: { [weak self] in self?.restart() })
+    private var openedByURL = false
+    func application(_ application: NSApplication, open urls: [URL]) {
+        openedByURL = true
+        urls.forEach(workspace.handleOpenURL)
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let installed = offerMoveToApplications() {
+            relaunch(installed, arguments: Array(CommandLine.arguments.dropFirst())) { [weak self] in
+                self?.finishLaunching(updates: false)
+                self?.updateItem.title = "Open FairyStack from Applications to finish"
+            }
+            return
+        }
         guard let renamed = adoptBundleName() else { finishLaunching(updates: true); return }
         var arguments = Array(CommandLine.arguments.dropFirst())
         if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister(); arguments.append(loginItemArgument) }
@@ -26,6 +38,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.finishLaunching(updates: false)
             self?.updateItem.title = "Moved to FairyStack.app · quit and reopen to finish"
         }
+    }
+    /// An app opened straight from its disk image (or translocated by Gatekeeper) cannot update itself.
+    private func offerMoveToApplications() -> URL? {
+        let current = Bundle.main.bundleURL
+        guard current.path.hasPrefix("/Volumes/") || current.path.contains("/AppTranslocation/") else { return nil }
+        NSApp.activate(ignoringOtherApps: true)
+        let offer = NSAlert(); offer.messageText = "Move FairyStack to Applications?"
+        offer.informativeText = "FairyStack is running from the download, so it can’t keep itself up to date."
+        offer.addButton(withTitle: "Move to Applications"); offer.addButton(withTitle: "Not Now")
+        guard offer.runModal() == .alertFirstButtonReturn else { return nil }
+        let manager = FileManager.default
+        for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), manager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)] {
+            // An existing install (either name) updates itself; open it rather than duplicating it.
+            for name in [appBundleName, legacyBundleName] where manager.fileExists(atPath: folder.appendingPathComponent(name).path) { return folder.appendingPathComponent(name, isDirectory: true) }
+        }
+        for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), manager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)] {
+            let target = folder.appendingPathComponent(appBundleName, isDirectory: true)
+            do { try manager.createDirectory(at: folder, withIntermediateDirectories: true); try manager.copyItem(at: current, to: target); return target }
+            catch { NSLog("FairyStack could not copy itself to %@: %@", folder.path, error.localizedDescription) }
+        }
+        let failed = NSAlert(); failed.messageText = "FairyStack could not be moved"
+        failed.informativeText = "Drag FairyStack into your Applications folder, then open it from there."; failed.runModal()
+        return nil
     }
     /// Moves a legacyBundleName install to appBundleName; returns the new bundle to relaunch.
     private func adoptBundleName() -> URL? {
@@ -52,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains(loginItemArgument) { try? SMAppService.mainApp.register() }
         commands.start(); refreshLogin(); if updates { updater.start() }
         workspace.adopt(CommandLine.arguments); workspace.restore()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, !self.openedByURL else { return }
+            self.workspace.welcomeIfNeeded()
+        }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { workspace.show() }

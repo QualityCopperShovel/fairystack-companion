@@ -21,6 +21,14 @@ final class AddressAndDescriptorTests: XCTestCase {
             XCTAssertNil(WorkspaceAddress.parse(bad), bad)
         }
     }
+    func testOpenLinksCarryOnlyAStackOrigin() {
+        XCTAssertEqual(WorkspaceAddress.fromOpenURL(URL(string: "fairystack://open?origin=https%3A%2F%2Fyou.fairystack.com")!)?.absoluteString, "https://you.fairystack.com")
+        for bad in ["fairystack://open?origin=https://fairystack.com", "fairystack://open?origin=http://you.fairystack.com",
+                    "fairystack://open?origin=https://you.fairystack.com/workspace", "fairystack://pair?origin=https://you.fairystack.com",
+                    "https://open?origin=https://you.fairystack.com", "fairystack://open"] {
+            XCTAssertNil(WorkspaceAddress.fromOpenURL(URL(string: bad)!), bad)
+        }
+    }
     func testDescriptorMustBeSameOriginSafeAndImage() {
         let image = DraggableImage(descriptor(), origin: origin)
         XCTAssertEqual(image?.filename, "comic.png"); XCTAssertEqual(image?.type, .png); XCTAssertEqual(image?.isFresh, true)
