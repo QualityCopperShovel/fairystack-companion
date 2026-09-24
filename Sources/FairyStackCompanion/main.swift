@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.5.0"
+let appVersion = "1.5.1"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -133,6 +133,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Close", #selector(NSWindow.performClose(_:)), "w")]))
         return main
+    }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quitting or updating keeps the window's open state, so the next launch shows it again.
+        workspace.terminating = true
+        return .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { commands.stop() }
     @objc private func checkUpdates() { updater.check(announce: true) }

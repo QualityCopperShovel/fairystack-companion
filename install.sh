@@ -66,14 +66,14 @@ fairystack_install() (
     step='checking Gatekeeper approval'
     run 45 spctl --assess --type execute --verbose "$1"
   }
-  version='1.5.0'
+  version='1.5.1'
   fetch() {
     work=$(mktemp -d "$apps/.fairystack.XXXXXX")
     step='downloading FairyStack'
     printf 'Downloading FairyStack %s…\n' "$version"
     run 125 curl --fail --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 -o "$work/fairystack.zip" "https://fairystack.com/assets/FairyStack-$version.zip"
     step='checking the download checksum'
-    (cd "$work"; printf '%s\n' '4f6954d73a1c9ae8516b232bf5c1e02e57d23377cb79b42920585bc93e7de990  fairystack.zip' > checksum)
+    (cd "$work"; printf '%s\n' '334440ccf6a54b520eacdefa8f820f296ddba3f84ae925352b3703d0f52f9f6e  fairystack.zip' > checksum)
     run 10 bash -c 'cd "$1" && shasum -a 256 -c checksum' _ "$work"
     step='unpacking the app'
     run 30 ditto -x -k "$work/fairystack.zip" "$work"

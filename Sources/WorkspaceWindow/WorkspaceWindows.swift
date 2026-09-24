@@ -156,6 +156,8 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         guard let page = current, let url = page.view.url, let origin, WorkspaceAddress.sameOrigin(url, origin) else { return [] }
         return ["--fairystack-resume", url.absoluteString] + (NSApp.isActive ? ["--fairystack-activate"] : [])
     }
+    /// Set once the app starts quitting: windows AppKit closes on the way out were not closed by the owner.
+    public var terminating = false
     private var resumeURL: URL?
     private var activateOnResume = false
     public func adopt(_ arguments: [String]) {
@@ -270,7 +272,10 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     public func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, let index = pages.firstIndex(where: { $0.window === window }) else { return }
         pages[index].view.stopLoading(); pages.remove(at: index)
-        if pages.isEmpty { UserDefaults.standard.set(false, forKey: Self.openKey); NSApp.setActivationPolicy(.accessory) }
+        if pages.isEmpty {
+            if !terminating { UserDefaults.standard.set(false, forKey: Self.openKey) }
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     private func allowedInWindow(_ url: URL) -> Bool {
