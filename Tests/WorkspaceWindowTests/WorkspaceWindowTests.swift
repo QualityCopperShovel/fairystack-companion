@@ -218,6 +218,32 @@ final class SavedStackTests: XCTestCase {
         XCTAssertTrue(trial.entries.isEmpty); XCTAssertTrue(trial.windows.isEmpty)
         XCTAssertNil(defaults.string(forKey: WorkspaceAddress.defaultsKey))
     }
+    func testMultiplayerIsTheOnlyDefaultStackAndForgettingItSticks() {
+        let fresh = SavedStacks(defaults: defaults)
+        XCTAssertTrue(fresh.entries.isEmpty, "loading bookmarks alone never invents one")
+        fresh.seedDefault()
+        XCTAssertEqual(fresh.entries.map(\.url), [URL(string: "https://multi.fairystack.com")!])
+        XCTAssertEqual(fresh.selected, SavedStacks.defaultStack.url); XCTAssertEqual(fresh.entries.first?.name, "Multiplayer")
+        fresh.remove(SavedStacks.defaultStack.url); SavedStacks(defaults: defaults).seedDefault()
+        XCTAssertTrue(SavedStacks(defaults: defaults).entries.isEmpty, "forgetting the default must survive relaunch")
+    }
+    func testExistingInstallsGainMultiplayerOnceWithoutLosingTheirSelection() {
+        let store = SavedStacks(defaults: defaults); store.add(origin); store.add(second); store.select(origin)
+        store.seedDefault(); store.seedDefault()
+        XCTAssertEqual(store.entries.map(\.url), [origin, second, SavedStacks.defaultStack.url])
+        XCTAssertEqual(SavedStacks(defaults: defaults).selected, origin)
+        let alreadyThere = UserDefaults(suiteName: suite! + ".b")!; defer { alreadyThere.removePersistentDomain(forName: suite! + ".b") }
+        let listed = SavedStacks(defaults: alreadyThere); listed.add(SavedStacks.defaultStack.url); listed.seedDefault()
+        XCTAssertEqual(listed.entries.count, 1, "an existing multi bookmark is not duplicated")
+    }
+    func testFreshLaunchOpensTheMultiplayerStack() {
+        let manager = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        manager.adopt([]); XCTAssertEqual(manager.origin, SavedStacks.defaultStack.url)
+        let handoff = UserDefaults(suiteName: suite! + ".c")!; defer { handoff.removePersistentDomain(forName: suite! + ".c") }
+        let own = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: handoff)
+        own.adopt(["FairyStack", "--fairystack-origin", origin.absoluteString])
+        XCTAssertEqual(own.origin, origin, "a stack's own download handoff still wins the selection")
+    }
     func testDuplicateAndMalformedHandoffsNeverResolve() {
         for query in ["origin=https://you.fairystack.com&origin=https://other.fairystack.com", "origin=https://you.fairystack.com&name=Trusted", "origin=https://you.fairystack.com&token=secret"] {
             XCTAssertNil(WorkspaceAddress.fromOpenURL(URL(string: "fairystack://open?" + query)!))

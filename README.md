@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.8.3
+# FairyStack for Mac 1.9.0
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -44,7 +44,9 @@ non-trial windows. Trial windows use temporary WebKit storage and never restore.
 
 The menu also offers Rename and Forget for the current stack. Forget removes its
 bookmark and restoration record while leaving its open windows and login intact.
-**Add stack by address** is a recovery option. Existing single-address installations
+Every install starts with one stack, **Multiplayer** (https://multi.fairystack.com), the
+shared stack whose members all see every session. It is added once without changing an
+existing selection; Forget removes it for good. **Add stack by address** is a recovery option. Existing single-address installations
 migrate automatically; an old command-paired origin is a one-time fallback when there
 is no saved address. Saved stacks are local bookmarks, not a cross-instance account
 directory. Opened straight from the disk image, the app offers to move itself to
