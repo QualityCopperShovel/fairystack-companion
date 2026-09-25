@@ -67,6 +67,12 @@ class RelaunchWiringTests(unittest.TestCase):
         self.assertIn('persistWindows()', window.split('public var resumeArguments')[1].split('}')[0])
         self.assertIn('open(URLRequest(url: url, timeoutInterval: 30), origin: stack.url, configuration: nil, activate: activateOnResume)', window)
 
+    def test_background_update_never_automatically_restarts_capture(self):
+        callback = MAIN.split('installed: {')[1].split('})')[0]
+        self.assertNotIn('restart()', callback)
+        self.assertIn('Update ready', callback)
+        self.assertIn('if updater.stagedVersion != nil { restart() } else { updater.check(announce: true) }', MAIN)
+
     def test_quitting_does_not_record_the_window_as_closed(self):
         # 1.3.0 CI evidence: AppKit closed the window while quitting for an update, the close
         # handler saved workspaceWindowOpen = false, and the relaunched build stayed menu-bar only.

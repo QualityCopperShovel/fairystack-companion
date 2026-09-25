@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.8.2
+# FairyStack for Mac 1.8.3
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -55,7 +55,9 @@ Commands run as the logged-in Mac user, with no interactive password or elevated
 approval support. Disconnect revokes authority and stops its process group.
 
 Automatic updates use only FairyStack's own public manifest and signed product
-identity. Updates stop active commands before relaunch. Both network and command
+identity. Background updates are staged without restarting or interrupting microphones. Choose
+**Update ready · restart FairyStack…** in the menu when ready, or quit and reopen
+normally. An explicit restart stops active commands before relaunch. Both network and command
 execution are bounded; disconnection never replays a claimed command. Deliberately
 detached background processes are unsupported. Local activity and owner-scoped
 server receipts retain output; never print credentials.

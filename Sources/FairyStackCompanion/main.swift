@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.8.2"
+let appVersion = "1.8.3"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let loginItem = NSMenuItem(title: "Open at login", action: #selector(toggleLogin), keyEquivalent: "")
     private lazy var updater = AppUpdater(status: { [weak self] text in
         DispatchQueue.main.async { self?.updateItem.title = text }
-    }, installed: { [weak self] in self?.restart() })
+    }, installed: { [weak self] in self?.updateItem.title = "Update ready · restart FairyStack…" })
     private var openedByURL = false
     func application(_ application: NSApplication, open urls: [URL]) {
         openedByURL = true
@@ -150,7 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { commands.stop() }
-    @objc private func checkUpdates() { updater.check(announce: true) }
+    @objc private func checkUpdates() {
+        // A background download must never terminate a window that owns microphone capture.
+        // Restart only on this explicit menu action (or the next normal launch).
+        if updater.stagedVersion != nil { restart() } else { updater.check(announce: true) }
+    }
     private func refreshLogin() { loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off }
     @objc private func toggleLogin() {
         do {

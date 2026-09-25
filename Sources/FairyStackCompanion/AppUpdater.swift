@@ -9,7 +9,7 @@ final class AppUpdater {
     private let status: (String) -> Void
     private let installed: () -> Void
     private var timer: Timer?
-    private let updates = UpdateAdmission(currentVersion: "1.8.2")
+    private let updates = UpdateAdmission(currentVersion: "1.8.3")
     init(status: @escaping (String) -> Void, installed: @escaping () -> Void) { self.status = status; self.installed = installed }
     var stagedVersion: String? { updates.stagedVersion }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
@@ -18,7 +18,7 @@ final class AppUpdater {
         var request = URLRequest(url: URL(string: "https://fairystack.com/assets/mac-version.json")!); request.timeoutInterval = 15
         session.dataTask(with: request) { data, response, error in
             guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; self.updates.finish(); return }
-            guard self.updates.isNewer(manifest.version) else { if announce { self.status(self.updates.stagedVersion == nil ? "FairyStack is up to date" : "Update installed · takes effect next launch") }; self.updates.finish(); return }
+            guard self.updates.isNewer(manifest.version) else { if announce { self.status(self.updates.stagedVersion == nil ? "FairyStack is up to date" : "Update ready · restart FairyStack…") }; self.updates.finish(); return }
             guard manifest.notarized, let downloadURL = URL(string: manifest.download_url), downloadURL.scheme == "https", downloadURL.host == "fairystack.com" else { self.status("Update manifest is invalid"); self.updates.finish(); return }
             var downloadRequest = URLRequest(url: downloadURL); downloadRequest.timeoutInterval = 30
             self.session.dataTask(with: downloadRequest) { payload, downloadResponse, downloadError in
@@ -65,7 +65,7 @@ final class AppUpdater {
                 }
                 try? manager.removeItem(at: backup)
                 self.updates.installed(version)
-                self.status("Update installed · restarting…")
+                self.status("Update ready · restart FairyStack…")
                 DispatchQueue.main.async(execute: self.installed)
             } catch {
                 self.status("Update failed: \(error.localizedDescription)")
