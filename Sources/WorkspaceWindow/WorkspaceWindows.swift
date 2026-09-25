@@ -171,6 +171,30 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private let store: SavedStacks
     private var focusedView: WorkspaceWebView?
     let microphone = MicrophoneOwnership()
+    // Read the existing page lifecycle owner; never restart during recording,
+    // permission startup, uploads, or a cross-window microphone transfer.
+    public func canRestartForUpdate(completion: @escaping (Bool) -> Void) {
+        let views = (pages + auxiliaries).map { $0.view } + (microphone.owner.map { [$0] } ?? [])
+        guard !microphone.isTransferring, views.allSatisfy({ $0.microphoneCaptureState == .none }) else {
+            completion(false); return
+        }
+        guard !views.isEmpty else { completion(true); return }
+        var remaining = views.count, finished = false
+        let finish: (Bool) -> Void = { ready in
+            guard !finished else { return }; finished = true
+            completion(ready && !self.microphone.isTransferring && views.allSatisfy { $0.microphoneCaptureState == .none })
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(false) }
+        for view in views {
+            view.evaluateJavaScript("document.readyState === 'complete' && !Boolean(window.FairyStackReloadGuard?.busy?.())") { value, error in
+                guard !finished else { return }
+                guard error == nil, value as? Bool == true else { finish(false); return }
+                remaining -= 1
+                if remaining == 0 { finish(true) }
+            }
+        }
+    }
+
     private var restoring = false
     private var menuAnchors: [ObjectIdentifier: NSMenuItem] = [:]
     private var pages: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []

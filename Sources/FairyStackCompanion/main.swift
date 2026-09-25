@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.9.1"
+let appVersion = "1.9.2"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -33,7 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let loginItem = NSMenuItem(title: "Open at login", action: #selector(toggleLogin), keyEquivalent: "")
     private lazy var updater = AppUpdater(status: { [weak self] text in
         DispatchQueue.main.async { self?.updateItem.title = text }
-    }, installed: { [weak self] in self?.updateItem.title = "Update ready · restart FairyStack…" })
+    }, installed: { [weak self] in self?.scheduleUpdateActivation() })
+    private var updateActivationTimer: Timer?
+    private var checkingUpdateActivation = false
     private var openedByURL = false
     func application(_ application: NSApplication, open urls: [URL]) {
         openedByURL = true
@@ -152,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) { commands.stop() }
     @objc private func checkUpdates() {
         // A background download must never terminate a window that owns microphone capture.
-        // Restart only on this explicit menu action (or the next normal launch).
+        // Manual restart remains available; automatic activation waits for idle.
         if updater.stagedVersion != nil { restart() } else { updater.check(announce: true) }
     }
     private func refreshLogin() { loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off }
@@ -163,7 +165,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch { let a = NSAlert(); a.messageText = "Login item failed"; a.informativeText = error.localizedDescription; a.runModal() }
         refreshLogin()
     }
+    private func scheduleUpdateActivation() {
+        updateActivationTimer?.invalidate()
+        updateActivationTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.activateUpdateWhenIdle() }
+        activateUpdateWhenIdle()
+    }
+    private func activateUpdateWhenIdle() {
+        guard updater.stagedVersion != nil, !checkingUpdateActivation else { return }
+        updateItem.title = "Update ready · waiting for recording or work to finish"
+        guard !commands.preventsUpdateRestart else { return }
+        checkingUpdateActivation = true
+        workspace.canRestartForUpdate { [weak self] ready in
+            guard let self else { return }
+            self.checkingUpdateActivation = false
+            guard ready, !self.commands.preventsUpdateRestart else { return }
+            self.restart()
+        }
+    }
     private func restart() {
+        updateActivationTimer?.invalidate(); updateActivationTimer = nil
         relaunch(Bundle.main.bundleURL, arguments: workspace.resumeArguments) { [weak self] in self?.updateItem.title = "Update installed · quit and reopen to finish" }
     }
     /// Quits, then a detached helper opens `bundle` once this process is gone. Old and new builds never

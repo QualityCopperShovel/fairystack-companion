@@ -31,6 +31,7 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
         activityMenu.target = self; activityMenu.action = #selector(openActivity)
     }
     var pairedOrigin: URL? { origin }
+    var preventsUpdateRestart: Bool { runner != nil || active != nil || pendingResult != nil }
     func start() {
         var result: CFTypeRef?
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "connection", kSecReturnData as String: true]

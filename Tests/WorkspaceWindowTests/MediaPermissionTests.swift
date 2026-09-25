@@ -306,6 +306,10 @@ final class CrossOriginMicrophoneTests: XCTestCase {
             """) as? Bool
         XCTAssertEqual(stable, true, "Winning window must still receive audio after the old five-second recovery interval")
         print("Cross-origin coordinated capture: Finance ended/closed before Jessald begins; Jessald audio live beyond six seconds = \(String(describing: stable))")
+        var updateReady: Bool?
+        windows.canRestartForUpdate { updateReady = $0 }
+        spin { updateReady != nil }
+        XCTAssertEqual(updateReady, false, "A downloaded update cannot restart the recording window")
         // Lost old window / never-resolving drain cannot grant a second owner.
         _ = js(jessald, "window.savedRelease=VoiceFeedClient.releaseForNativeTransfer; VoiceFeedClient.releaseForNativeTransfer=()=>new Promise(()=>{}); return true;")
         windows.microphone.deadline = 0.05
@@ -315,5 +319,20 @@ final class CrossOriginMicrophoneTests: XCTestCase {
         XCTAssertTrue(windows.microphone.owner === jessald)
         XCTAssertFalse(windows.microphone.admitPermission(finance))
         _ = js(jessald, "VoiceFeedClient.releaseForNativeTransfer=savedRelease; return true;")
+        _ = js(jessald, "await VoiceFeedClient.releaseForNativeTransfer(); return true;")
+        var captureStopped = false
+        jessald.setMicrophoneCaptureState(.none) { captureStopped = true }
+        spin { captureStopped }
+        _ = js(jessald, "window.FairyStackReloadGuard={busy:()=>true}; return true;")
+        updateReady = nil
+        windows.canRestartForUpdate { updateReady = $0 }
+        spin { updateReady != nil }
+        XCTAssertEqual(updateReady, false, "Pending uploads still defer an update after capture stops")
+        _ = js(jessald, "FairyStackReloadGuard.busy=()=>false; return true;")
+        updateReady = nil
+        windows.canRestartForUpdate { updateReady = $0 }
+        spin { updateReady != nil }
+        XCTAssertEqual(updateReady, true, "The same staged update can activate as soon as recording and uploads finish")
+
     }
 }

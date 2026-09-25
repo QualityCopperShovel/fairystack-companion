@@ -7,6 +7,7 @@ final class MicrophoneOwnership {
     private(set) weak var owner: WorkspaceWebView?
     private var transfer: UUID?
     var deadline: TimeInterval = 65
+    var isTransferring: Bool { transfer != nil }
 
     func admitPermission(_ view: WorkspaceWebView) -> Bool {
         guard transfer == nil, owner == nil || owner === view else { return false }

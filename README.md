@@ -1,4 +1,6 @@
-# FairyStack for Mac 1.9.1
+# FairyStack for Mac 1.9.2
+
+Updates download automatically and activate once recording, uploads and local commands finish.
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
