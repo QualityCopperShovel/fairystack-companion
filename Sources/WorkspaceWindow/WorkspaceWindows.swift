@@ -186,6 +186,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         let controller = WKUserContentController()
         controller.add(WeakMessageHandler(self), name: Self.dragMessage)
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
+        controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackConnect")
         return controller
     }()
 
@@ -380,6 +381,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         if opener != nil {
             let popupContent = WKUserContentController()
             popupContent.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
+            popupContent.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackConnect")
             config.userContentController = popupContent
         }
         let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 860), configuration: config)
@@ -450,7 +452,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                       replyHandler: @escaping (Any?, String?) -> Void) {
-        guard message.name == "fairystackPair", let view = message.webView as? WorkspaceWebView,
+        guard ["fairystackPair", "fairystackConnect"].contains(message.name), let view = message.webView as? WorkspaceWebView,
               let origin = view.workspaceOrigin, let window = view.window,
               message.frameInfo.isMainFrame, let frameURL = message.frameInfo.request.url,
               WorkspaceAddress.sameOrigin(frameURL, origin), frameURL.path == "/companions",

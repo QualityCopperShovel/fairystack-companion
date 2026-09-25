@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.8.1
+# FairyStack for Mac 1.8.2
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -50,8 +50,7 @@ is no saved address. Saved stacks are local bookmarks, not a cross-instance acco
 directory. Opened straight from the disk image, the app offers to move itself to
 Applications so it can update. The Terminal installer passes the address directly.
 
-Pair directly in the app’s Connect window: Choose folder opens a native folder sheet, then the window waits for the Mac’s verified check-in. No code copying or menu-bar step is required. The legacy menu pairing flow remains available. The app uses its own Keychain service and requires explicit local
-workspace selection. The folder sets a working directory, not a sandbox.
+Pair directly in the app’s Connect window: Connect this Mac saves the connection, then the window waits for the Mac’s verified check-in. No code copying or menu-bar step is required. The legacy menu pairing flow remains available. The app uses its own Keychain service and starts commands in your Mac user’s home folder. Commands use your account’s file access; macOS permissions still apply.
 Commands run as the logged-in Mac user, with no interactive password or elevated
 approval support. Disconnect revokes authority and stops its process group.
 

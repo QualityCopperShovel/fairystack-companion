@@ -12,7 +12,6 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
     private var root: URL?
     private var timer: Timer?
     private var busy = false
-    private var pairing = false
     private var generation = 0
     private var runner: OpaquePointer?
     private var active: [String: Any]?
@@ -49,7 +48,6 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
     }
     @objc func configure() {
         NSApp.activate(ignoringOtherApps: true)
-        guard !pairing else { showError("Finish the open folder chooser first."); return }
         if token == nil && runner != nil { showError("The previous command is still stopping. Try again in a moment."); return }
         if token != nil {
             let a = NSAlert(); a.messageText = "Disconnect FairyStack commands?"
@@ -59,9 +57,9 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
             return
         }
         let a = NSAlert(); a.messageText = "Connect FairyStack commands"
-        a.informativeText = "Paste the connection code from FairyStack’s Mac pairing page. Agents for that account can run shell commands as your Mac user. The selected folder is a working directory, not a security sandbox. Password and administrator prompts cannot be answered remotely."
+        a.informativeText = "Paste the connection code from FairyStack’s Mac pairing page. Agents for that account can run shell commands as your Mac user. Commands start in your home folder and use your Mac account’s file access. Password and administrator prompts cannot be answered remotely."
         let field = NSSecureTextField(frame: NSRect(x: 0,y: 0,width: 420,height: 28)); a.accessoryView = field
-        a.addButton(withTitle: "Choose workspace…"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let parts = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "|")
         guard parts.count == 2, let url = URL(string: parts[0]), url.scheme == "https", url.host != nil,
@@ -69,14 +67,11 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
               url.path.isEmpty || url.path == "/", parts[1].hasPrefix("fs_mac_"), parts[1].count < 100 else {
             showError("Invalid connection code. Create a new code on your FairyStack Mac pairing page."); return
         }
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        panel.message = "Choose the working folder for FairyStack commands. Commands run with your user account’s permissions."
-        guard panel.runModal() == .OK, let directory = panel.url else { return }
-        do { try saveConnection(origin: url, token: parts[1], directory: directory) }
+        do { try saveConnection(origin: url, token: parts[1]) }
         catch { showError(error.localizedDescription) }
     }
-    private func saveConnection(origin url: URL, token value: String, directory: URL) throws {
-        let folder = directory.resolvingSymlinksInPath().standardizedFileURL
+    private func saveConnection(origin url: URL, token value: String) throws {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL
         let data = try JSONSerialization.data(withJSONObject: ["origin":url.absoluteString,"token":value,"root":folder.path])
         let q: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"connection"]
         var add = q; add[kSecValueData as String] = data; add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -85,24 +80,9 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
         origin = url; token = value; root = folder; activate()
     }
     func connectFromWindow(origin: URL, token: String, window: NSWindow, completion: @escaping (String?) -> Void) {
-        guard !pairing else { completion("A folder chooser is already open."); return }
         guard self.token == nil, runner == nil else { completion("This Mac is already connected. Disconnect it before pairing again."); return }
-        pairing = true
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        panel.prompt = "Connect"; panel.message = "Choose a working folder. FairyStack commands use your Mac account’s access."
-        var finished = false
-        let timeout = DispatchWorkItem { [weak self] in
-            guard !finished else { return }; finished = true; self?.pairing = false
-            panel.cancel(nil); completion("Folder selection timed out. Try again.")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard !finished else { return }; finished = true; timeout.cancel(); self?.pairing = false
-            guard let self else { completion("FairyStack closed."); return }
-            guard response == .OK, let folder = panel.url else { completion("Folder selection cancelled."); return }
-            do { try self.saveConnection(origin: origin, token: token, directory: folder); completion(nil) }
-            catch { completion(error.localizedDescription) }
-        }
+        do { try saveConnection(origin: origin, token: token); completion(nil) }
+        catch { completion(error.localizedDescription) }
     }
     private func showError(_ text:String) { let a = NSAlert(); a.messageText = "FairyStack commands"; a.informativeText = text; a.runModal() }
     @objc private func openActivity() {

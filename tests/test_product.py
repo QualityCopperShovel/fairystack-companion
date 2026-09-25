@@ -3,6 +3,12 @@ import plistlib
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
 class StandaloneProductTests(unittest.TestCase):
+    def test_connection_defaults_to_mac_home_without_a_folder_chooser(self):
+        source=(ROOT/'Sources/FairyStackCompanion/FairyStackCommands.swift').read_text()
+        self.assertNotIn('NSOpenPanel',source,'Neither pairing entry point should ask for a folder')
+        self.assertIn('FileManager.default.homeDirectoryForCurrentUser',source)
+        self.assertNotIn('directory: URL',source,'The caller cannot accidentally restore a required folder argument')
+
     def test_independent_identity_and_scoped_audio_permission(self):
         info=plistlib.loads((ROOT/'Info.plist').read_bytes())
         self.assertEqual(info['CFBundleIdentifier'],'com.fairystack.companion')
