@@ -371,9 +371,13 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
             config.preferences.isElementFullscreenEnabled = true
             return config
         }()
-        // A popup keeps WebKit's supplied configuration/process pool and storage, but
-        // receives no native image bridge or scripts from the workspace.
-        if opener != nil { config.userContentController = WKUserContentController() }
+        // Popups keep WebKit's process pool and storage. Do not give approval sites
+        // the image bridge; pairing has its own main-frame, origin and path gate.
+        if opener != nil {
+            let popupContent = WKUserContentController()
+            popupContent.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
+            config.userContentController = popupContent
+        }
         let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 860), configuration: config)
         view.workspaceOrigin = origin
         view.isAuxiliary = opener != nil; view.opener = opener

@@ -413,3 +413,32 @@ final class LocalPairingRequestTests: XCTestCase {
         }
     }
 }
+
+
+extension ApprovalPopupTests {
+    func testPopupKeepsPairingBridgeButCannotPairFromBlankOrExternalPages() throws {
+        _ = NSApplication.shared
+        let suite = "FairyStackPairingPopupTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        var requests = 0
+        windows.connectLocal = { _, _, _, done in requests += 1; done(nil) }
+        let parent = windows.openStack(origin, activate: false); parent.stopLoading()
+        parent.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let loaded = expectation(description: "Connect opener loaded")
+        let waiter = LoadWaiter { loaded.fulfill() }; parent.navigationDelegate = waiter
+        parent.loadHTMLString("<title>Pairing opener</title>", baseURL: origin)
+        wait(for: [loaded], timeout: 15); parent.navigationDelegate = windows
+        defer { parent.window?.close() }
+        js(parent, "window.connectPopup = window.open('about:blank', 'connect'); void 0")
+        var popup: WorkspaceWebView?
+        spin({ popup = NSApp.windows.compactMap { $0.contentView as? WorkspaceWebView }.first { $0.opener === parent }; return popup != nil })
+        let connect = try XCTUnwrap(popup); defer { connect.window?.close() }
+        XCTAssertEqual(js(connect, "typeof webkit.messageHandlers.fairystackPair.postMessage") as? String, "function")
+        XCTAssertEqual(js(connect, "typeof webkit.messageHandlers.fairystackDrag") as? String, "undefined")
+        js(connect, "window.pairingResult='pending'; webkit.messageHandlers.fairystackPair.postMessage({token:'fs_mac_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}).then(()=>window.pairingResult='allowed',()=>window.pairingResult='denied'); void 0")
+        spin({ self.js(connect, "window.pairingResult") as? String == "denied" })
+        XCTAssertEqual(requests, 0, "A popup cannot pair until its document is the owned Connect page")
+    }
+}
