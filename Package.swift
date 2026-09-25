@@ -6,5 +6,7 @@ let package = Package(name: "FairyStackCompanion", platforms: [.macOS(.v13)], pr
     .target(name: "CommandRunner", publicHeadersPath: "include"),
     .target(name: "WorkspaceWindow"),
     .executableTarget(name: "FairyStackCompanion", dependencies: ["CommandRunner", "WorkspaceWindow"]),
-    .testTarget(name: "WorkspaceWindowTests", dependencies: ["WorkspaceWindow"])
+    // Objective-C fixtures exercise the same nullable boundary as WebKit. Test only.
+    .target(name: "WebKitPermissionFixtures", path: "Tests/WebKitPermissionFixtures", publicHeadersPath: "include"),
+    .testTarget(name: "WorkspaceWindowTests", dependencies: ["WorkspaceWindow", "WebKitPermissionFixtures"])
 ])

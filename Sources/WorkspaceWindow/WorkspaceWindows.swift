@@ -30,8 +30,9 @@ enum WorkspaceAddress {
               let origin = parse(value), origin.host != "fairystack.com", origin.host != "www.fairystack.com" else { return nil }
         return origin
     }
-    static func permitsMicrophone(origin: URL, page: URL, frame: URL, mainFrame: Bool, type: WKMediaCaptureType) -> Bool {
-        type == .microphone && mainFrame && sameOrigin(page, origin) && sameOrigin(frame, origin)
+    static func sameOrigin(_ securityOrigin: WKSecurityOrigin, _ origin: URL) -> Bool {
+        securityOrigin.protocol == "https" && securityOrigin.host.lowercased() == origin.host &&
+            (securityOrigin.port == 0 ? 443 : securityOrigin.port) == (origin.port ?? 443)
     }
     static func sameOrigin(_ url: URL, _ origin: URL) -> Bool {
         url.scheme == "https" && url.user == nil && url.password == nil && url.host?.lowercased() == origin.host && (url.port ?? 443) == (origin.port ?? 443)
@@ -524,13 +525,15 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor securityOrigin: WKSecurityOrigin,
                         initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                         decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        guard frame.isMainFrame,
-              let workspace = webView as? WorkspaceWebView,
+        // WebKit can supply a nil Objective-C request for capture frames despite
+        // Swift importing WKFrameInfo.request as nonoptional. Even request.url
+        // traps while bridging it. Permission uses the supplied security origins.
+        guard type == .microphone, frame.isMainFrame, frame.webView === webView,
+              let workspace = webView as? WorkspaceWebView, !workspace.isAuxiliary,
               let origin = workspace.workspaceOrigin, let url = webView.url,
-              let frameURL = frame.request.url,
-              WorkspaceAddress.permitsMicrophone(origin: origin, page: url, frame: frameURL, mainFrame: frame.isMainFrame, type: type),
-              securityOrigin.protocol == "https", securityOrigin.host.lowercased() == origin.host,
-              (securityOrigin.port == (origin.port ?? 443) || (securityOrigin.port == 0 && origin.port == nil))
+              WorkspaceAddress.sameOrigin(url, origin),
+              WorkspaceAddress.sameOrigin(securityOrigin, origin),
+              WorkspaceAddress.sameOrigin(frame.securityOrigin, origin)
         else { decisionHandler(.deny); return }
         decisionHandler(.prompt)
     }

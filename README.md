@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.7.1
+# FairyStack for Mac 1.8.1
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
@@ -13,7 +13,11 @@ run process ownership tests, native window tests and launch checks, then
 sign/notarize the universal app.
 
 Build with `swift build -c release`; `swift test` exercises WebKit mouse routing
-and image file promises; behavioral process tests use
+and image file promises, nil-request Objective-C permission callbacks (including an
+isolated reproduction of the old Foundation trap), and real WebKit getUserMedia
+with mock devices and bounded no-hardware/denial cases. Mock consent never replaces
+the production permission prompt; physical microphone capture requires a real Mac.
+Behavioral process tests use
 `python3 -m unittest discover -s tests -v`. The checked-in Info.plist and icon
 source define the signed app bundle. Download and pairing links are documented
 in FairyStack's live agent guide, FairyStack for Mac section.

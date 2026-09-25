@@ -17,6 +17,7 @@ class StandaloneProductTests(unittest.TestCase):
     def test_version_matches_bundle_and_updater(self):
         version=(ROOT/'VERSION').read_text().strip()
         self.assertEqual(plistlib.loads((ROOT/'Info.plist').read_bytes())['CFBundleShortVersionString'],version)
+        self.assertIn("version='"+version+"'", (ROOT/'install.sh').read_text(), 'installer URL and release version must advance together')
         self.assertIn('currentVersion: "'+version+'"',(ROOT/'Sources/FairyStackCompanion/AppUpdater.swift').read_text())
 
     def test_product_is_named_fairystack_but_keeps_identifiers_old_updaters_pin(self):
