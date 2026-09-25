@@ -30,6 +30,9 @@ enum WorkspaceAddress {
               let origin = parse(value), origin.host != "fairystack.com", origin.host != "www.fairystack.com" else { return nil }
         return origin
     }
+    static func permitsMicrophone(origin: URL, page: URL, frame: URL, mainFrame: Bool, type: WKMediaCaptureType) -> Bool {
+        type == .microphone && mainFrame && sameOrigin(page, origin) && sameOrigin(frame, origin)
+    }
     static func sameOrigin(_ url: URL, _ origin: URL) -> Bool {
         url.scheme == "https" && url.user == nil && url.password == nil && url.host?.lowercased() == origin.host && (url.port ?? 443) == (origin.port ?? 443)
     }
@@ -516,6 +519,22 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { persistWindows() }
     public func webViewDidClose(_ webView: WKWebView) { webView.window?.close() }
+    // Microphone permission belongs only to this saved stack's main frame.
+    // Camera, subframes, approval popups and navigated external pages stay denied.
+    public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor securityOrigin: WKSecurityOrigin,
+                        initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                        decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        guard frame.isMainFrame,
+              let workspace = webView as? WorkspaceWebView,
+              let origin = workspace.workspaceOrigin, let url = webView.url,
+              let frameURL = frame.request.url,
+              WorkspaceAddress.permitsMicrophone(origin: origin, page: url, frame: frameURL, mainFrame: frame.isMainFrame, type: type),
+              securityOrigin.protocol == "https", securityOrigin.host.lowercased() == origin.host,
+              (securityOrigin.port == (origin.port ?? 443) || (securityOrigin.port == 0 && origin.port == nil))
+        else { decisionHandler(.deny); return }
+        decisionHandler(.prompt)
+    }
+
     public func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel(); panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories; panel.allowsMultipleSelection = parameters.allowsMultipleSelection

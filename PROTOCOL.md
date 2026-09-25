@@ -3,7 +3,7 @@
 
 `/companions` is the owner-authenticated pairing and command activity surface.
 FairyStack for Mac (FairyStack.app) is a standalone signed/notarized Mac app with its own
-Keychain entry, menu, login item and automatic-update channel. It has no microphone
+Keychain entry, menu, login item and automatic-update channel. The command protocol has no microphone
 permission and no Voice Feed dependency. A human creates
 a ten-minute code on this page, pastes it locally into **FairyStack commands:
 Off…**, and selects a workspace. The device credential is stored in Keychain,

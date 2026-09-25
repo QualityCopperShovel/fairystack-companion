@@ -3,11 +3,12 @@ import plistlib
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
 class StandaloneProductTests(unittest.TestCase):
-    def test_independent_identity_and_no_audio_permission(self):
+    def test_independent_identity_and_scoped_audio_permission(self):
         info=plistlib.loads((ROOT/'Info.plist').read_bytes())
         self.assertEqual(info['CFBundleIdentifier'],'com.fairystack.companion')
         self.assertEqual(info['CFBundleExecutable'],'FairyStackCompanion')
-        self.assertNotIn('NSMicrophoneUsageDescription',info)
+        self.assertIn('NSMicrophoneUsageDescription',info)
+        self.assertEqual(plistlib.loads((ROOT/'Entitlements.plist').read_bytes()), {'com.apple.security.device.audio-input': True})
         sources='\n'.join(p.read_text() for p in (ROOT/'Sources').rglob('*.swift'))
         self.assertNotIn('AVFoundation',sources)
         # Voice Feed is an auxiliary web approval origin, never a native capture client.

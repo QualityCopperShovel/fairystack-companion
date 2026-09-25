@@ -73,7 +73,7 @@ fairystack_install() (
     printf 'Downloading FairyStack %s…\n' "$version"
     run 125 curl --fail --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 -o "$work/fairystack.zip" "https://fairystack.com/assets/FairyStack-$version.zip"
     step='checking the download checksum'
-    (cd "$work"; printf '%s\n' 'ebfe8c9b3e93f98cf48049dab4a224a15333098a76d67b5122bd45c203bfe7c4  fairystack.zip' > checksum)
+    (cd "$work"; printf '%s\n' '274b77ae69e03c54e9e54d8367df527b10571a601faf25fb1a62befcb4c74c58  fairystack.zip' > checksum)
     run 10 bash -c 'cd "$1" && shasum -a 256 -c checksum' _ "$work"
     step='unpacking the app'
     run 30 ditto -x -k "$work/fairystack.zip" "$work"

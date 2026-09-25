@@ -3,9 +3,10 @@
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
 FairyStack in a native window and can optionally run agent commands on this Mac.
-No native microphone permission or capture token. The workspace microphone connects
-to Voice Feed in a temporary native approval window; desktop capture remains with
-the existing Voice Feed microphone owner. Approval windows never become saved stacks. Source lives
+The workspace microphone uses your signed-in FairyStack account and this Mac's
+microphone after explicit macOS/WebKit permission. No separate Voice Feed signup
+is required. Camera and cross-origin microphone requests are denied. Existing
+standalone Voice Feed accounts and devices remain separate. Source lives
 with FairyStack. Existing hosted Mac builders receive only this credential-free
 source archive and its exact revision/checksum; they build Intel/Apple silicon,
 run process ownership tests, native window tests and launch checks, then

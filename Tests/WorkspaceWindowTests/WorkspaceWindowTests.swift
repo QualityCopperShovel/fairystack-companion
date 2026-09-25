@@ -14,6 +14,16 @@ private func descriptor(_ changes: [String: Any] = [:]) -> [String: Any] {
 }
 
 final class AddressAndDescriptorTests: XCTestCase {
+    func testMicrophonePermissionIsLimitedToTheStacksMainFrame() {
+        let page = origin.appendingPathComponent("workspace/")
+        let other = URL(string: "https://voice-feed.aisloppy.com/")!
+        XCTAssertTrue(WorkspaceAddress.permitsMicrophone(origin: origin, page: page, frame: page, mainFrame: true, type: .microphone))
+        XCTAssertFalse(WorkspaceAddress.permitsMicrophone(origin: origin, page: page, frame: page, mainFrame: false, type: .microphone))
+        XCTAssertFalse(WorkspaceAddress.permitsMicrophone(origin: origin, page: other, frame: page, mainFrame: true, type: .microphone))
+        XCTAssertFalse(WorkspaceAddress.permitsMicrophone(origin: origin, page: page, frame: other, mainFrame: true, type: .microphone))
+        XCTAssertFalse(WorkspaceAddress.permitsMicrophone(origin: origin, page: page, frame: page, mainFrame: true, type: .camera))
+        XCTAssertFalse(WorkspaceAddress.permitsMicrophone(origin: origin, page: page, frame: page, mainFrame: true, type: .cameraAndMicrophone))
+    }
     func testAddressesAreHTTPSOriginsOnly() {
         XCTAssertEqual(WorkspaceAddress.parse(" You.FairyStack.com ")?.absoluteString, "https://you.fairystack.com")
         XCTAssertEqual(WorkspaceAddress.parse("https://you.fairystack.com/")?.absoluteString, "https://you.fairystack.com")

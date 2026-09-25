@@ -11,7 +11,7 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-DIGEST = 'ebfe8c9b3e93f98cf48049dab4a224a15333098a76d67b5122bd45c203bfe7c4'
+DIGEST = '274b77ae69e03c54e9e54d8367df527b10571a601faf25fb1a62befcb4c74c58'
 
 
 class InstallerTests(unittest.TestCase):
