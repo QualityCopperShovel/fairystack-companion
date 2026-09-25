@@ -170,6 +170,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private let pairedOrigin: () -> URL?
     private let store: SavedStacks
     private var focusedView: WorkspaceWebView?
+    let microphone = MicrophoneOwnership()
     private var restoring = false
     private var menuAnchors: [ObjectIdentifier: NSMenuItem] = [:]
     private var pages: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []
@@ -185,6 +186,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private lazy var content: WKUserContentController = {
         let controller = WKUserContentController()
         controller.add(WeakMessageHandler(self), name: Self.dragMessage)
+        controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackMicrophone")
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackConnect")
         return controller
@@ -452,6 +454,20 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                       replyHandler: @escaping (Any?, String?) -> Void) {
+        if message.name == "fairystackMicrophone" {
+            guard let view = message.webView as? WorkspaceWebView, !view.isAuxiliary,
+                  let origin = view.workspaceOrigin, let url = view.url,
+                  message.frameInfo.isMainFrame, message.frameInfo.webView === view,
+                  WorkspaceAddress.sameOrigin(url, origin),
+                  WorkspaceAddress.sameOrigin(message.frameInfo.securityOrigin, origin),
+                  let body = message.body as? [String: String], body == ["action": "claim"]
+            else { replyHandler(nil, "Microphone ownership is only available to this saved stack’s main window."); return }
+            microphone.claim(view) { error in
+                if let error { replyHandler(nil, error) }
+                else { replyHandler(["state": "owned"], nil) }
+            }
+            return
+        }
         guard ["fairystackPair", "fairystackConnect"].contains(message.name), let view = message.webView as? WorkspaceWebView,
               let origin = view.workspaceOrigin, let window = view.window,
               message.frameInfo.isMainFrame, let frameURL = message.frameInfo.request.url,
@@ -537,6 +553,9 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
               WorkspaceAddress.sameOrigin(securityOrigin, origin),
               WorkspaceAddress.sameOrigin(frame.securityOrigin, origin)
         else { decisionHandler(.deny); return }
+        // Old pages may still request capture without the preflight bridge. They
+        // can acquire an idle Mac, but must never mute another workspace.
+        guard microphone.admitPermission(workspace) else { decisionHandler(.deny); return }
         decisionHandler(.prompt)
     }
 

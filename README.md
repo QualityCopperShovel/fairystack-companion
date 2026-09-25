@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.9.0
+# FairyStack for Mac 1.9.1
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your

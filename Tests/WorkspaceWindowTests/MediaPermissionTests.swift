@@ -207,3 +207,113 @@ final class MediaCaptureWebKitTests: XCTestCase {
         XCTAssertTrue(probe.decisions.isEmpty || probe.decisions == [.prompt])
     }
 }
+
+// Real WebKit content/GPU processes, mock devices only: no physical audio is
+// captured or uploaded by CI. The two origins model Finance and Jessald.
+private final class OwnershipCaptureProbe: NSObject, WKUIDelegate {
+    let windows: WorkspaceWindows
+    var legacy = true
+    init(_ windows: WorkspaceWindows) { self.windows = windows }
+    func webView(_ view: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        if legacy { decisionHandler(.grant); return } // Only FSConfigureMockCapture views.
+        FSRequestPermission(windows, view, origin, frame, type) {
+            decisionHandler($0 == .prompt ? .grant : .deny)
+        }
+    }
+}
+
+final class CrossOriginMicrophoneTests: XCTestCase {
+    func testFinanceAndJessaldTransferStopsOldCaptureBeforeStartingNewCapture() throws {
+        _ = NSApplication.shared
+        let suite = "FairyStackOwnership." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        let probe = OwnershipCaptureProbe(windows)
+        let data = WKWebsiteDataStore.nonPersistent()
+        var views: [WorkspaceWebView] = [], nativeWindows: [NSWindow] = []
+        func spin(_ ready: () -> Bool, seconds: Double = 15) {
+            let end = Date().addingTimeInterval(seconds)
+            while !ready() && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            XCTAssertTrue(ready(), "Cross-origin capture exceeded its deadline")
+        }
+        func js(_ view: WKWebView, _ script: String) -> Any? {
+            var finished = false, value: Any?, failure: Error?
+            view.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
+                switch result { case .success(let result): value = result; case .failure(let error): failure = error }
+                finished = true
+            }
+            spin { finished }; XCTAssertNil(failure)
+            return value
+        }
+        defer {
+            for view in views { _ = js(view, "await window.VoiceFeedClient.releaseForNativeTransfer(); return true;") }
+            nativeWindows.forEach { $0.close() }
+        }
+        for host in ["finance-capture.fairystack.com", "jessald-capture.fairystack.com"] {
+            let config = WKWebViewConfiguration(); config.websiteDataStore = data
+            guard FSConfigureMockCapture(config.preferences) else { throw NSError(domain: "CaptureFixture", code: 1) }
+            let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: config)
+            view.workspaceOrigin = URL(string: "https://\(host)/")!; view.uiDelegate = probe
+            let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = view; window.makeKeyAndOrderFront(nil)
+            views.append(view); nativeWindows.append(window)
+            let waiter = CaptureLoadWaiter(); view.navigationDelegate = waiter
+            view.loadHTMLString("<title>Cross-origin microphone fixture</title>", baseURL: view.workspaceOrigin)
+            spin { waiter.finished }; XCTAssertNil(waiter.error)
+            _ = js(view, """
+                window.begin = async () => {
+                    window.audio = new AudioContext(); await audio.resume();
+                    window.stream = await navigator.mediaDevices.getUserMedia({audio:true});
+                    window.track = stream.getAudioTracks()[0]; window.mutedEvents = 0;
+                    track.onmute = () => { mutedEvents++; };
+                    window.analyser = audio.createAnalyser(); audio.createMediaStreamSource(stream).connect(analyser);
+                    window.recorder = new MediaRecorder(stream);
+                    window.chunks = 0; recorder.ondataavailable = e => { if (e.data.size) chunks++; };
+                    recorder.start(250); return track.readyState;
+                };
+                window.VoiceFeedClient = {releaseForNativeTransfer: async () => {
+                    if (!window.stream) return;
+                    if (recorder.state !== 'inactive') await new Promise(resolve => {recorder.onstop=resolve;recorder.stop();});
+                    stream.getTracks().forEach(t => t.stop()); await audio.close();
+                }};
+                return true;
+                """)
+        }
+        let finance = views[0], jessald = views[1]
+        XCTAssertEqual(js(finance, "return await begin();") as? String, "live")
+        XCTAssertEqual(js(jessald, "return await begin();") as? String, "live")
+        let baselineMuted = js(finance, "await new Promise(r=>setTimeout(r,500)); return track.muted || mutedEvents > 0;") as? Bool
+        print("Cross-origin legacy WebKit capture: Finance muted after Jessald starts = \(String(describing: baselineMuted))")
+        XCTAssertEqual(baselineMuted, true, "Expected the actual dual-WKWebView contention seen in the operator's Mac logs")
+        for view in views { _ = js(view, "await VoiceFeedClient.releaseForNativeTransfer(); return true;") }
+        probe.legacy = false
+        var claimed = false
+        windows.microphone.claim(finance) { XCTAssertNil($0); claimed = true }
+        spin { claimed }
+        XCTAssertEqual(js(finance, "return await begin();") as? String, "live")
+        claimed = false
+        windows.microphone.claim(jessald) { XCTAssertNil($0); claimed = true }
+        spin { claimed }
+        XCTAssertEqual(js(finance, "return track.readyState + ':' + audio.state;") as? String, "ended:closed")
+        XCTAssertTrue(windows.microphone.owner === jessald)
+        XCTAssertEqual(js(jessald, "return await begin();") as? String, "live")
+        let stable = js(jessald, """
+            const before=audio.currentTime; await new Promise(r=>setTimeout(r,6000));
+            return track.readyState==='live' && !track.muted && mutedEvents===0 && audio.currentTime>before && chunks>0;
+            """) as? Bool
+        XCTAssertEqual(stable, true, "Winning window must still receive audio after the old five-second recovery interval")
+        print("Cross-origin coordinated capture: Finance ended/closed before Jessald begins; Jessald audio live beyond six seconds = \(String(describing: stable))")
+        // Lost old window / never-resolving drain cannot grant a second owner.
+        _ = js(jessald, "window.savedRelease=VoiceFeedClient.releaseForNativeTransfer; VoiceFeedClient.releaseForNativeTransfer=()=>new Promise(()=>{}); return true;")
+        windows.microphone.deadline = 0.05
+        var terminal = false
+        windows.microphone.claim(finance) { error in XCTAssertTrue(error?.contains("timed out") == true); terminal = true }
+        spin { terminal }
+        XCTAssertTrue(windows.microphone.owner === jessald)
+        XCTAssertFalse(windows.microphone.admitPermission(finance))
+        _ = js(jessald, "VoiceFeedClient.releaseForNativeTransfer=savedRelease; return true;")
+    }
+}
