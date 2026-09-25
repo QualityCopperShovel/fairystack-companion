@@ -1,9 +1,11 @@
-# FairyStack for Mac 1.6.0
+# FairyStack for Mac 1.7.0
 
 The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
 FairyStack in a native window and can optionally run agent commands on this Mac.
-No Voice Feed dependency, microphone permission or capture token. Source lives
+No native microphone permission or capture token. The workspace microphone connects
+to Voice Feed in a temporary native approval window; desktop capture remains with
+the existing Voice Feed microphone owner. Approval windows never become saved stacks. Source lives
 with FairyStack. Existing hosted Mac builders receive only this credential-free
 source archive and its exact revision/checksum; they build Intel/Apple silicon,
 run process ownership tests, native window tests and launch checks, then
@@ -43,8 +45,7 @@ is no saved address. Saved stacks are local bookmarks, not a cross-instance acco
 directory. Opened straight from the disk image, the app offers to move itself to
 Applications so it can update. The Terminal installer passes the address directly.
 
-Pair from the app's fairy menu-bar icon after creating a code at your control origin's
-`/companions`. The app uses its own Keychain service and requires explicit local
+Pair directly in the app’s Connect window: Choose folder opens a native folder sheet, then the window waits for the Mac’s verified check-in. No code copying or menu-bar step is required. The legacy menu pairing flow remains available. The app uses its own Keychain service and requires explicit local
 workspace selection. The folder sets a working directory, not a sandbox.
 Commands run as the logged-in Mac user, with no interactive password or elevated
 approval support. Disconnect revokes authority and stops its process group.

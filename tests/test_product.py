@@ -10,7 +10,8 @@ class StandaloneProductTests(unittest.TestCase):
         self.assertNotIn('NSMicrophoneUsageDescription',info)
         sources='\n'.join(p.read_text() for p in (ROOT/'Sources').rglob('*.swift'))
         self.assertNotIn('AVFoundation',sources)
-        self.assertNotIn('voice-feed.aisloppy.com',sources)
+        # Voice Feed is an auxiliary web approval origin, never a native capture client.
+        self.assertNotIn('voice-feed.aisloppy.com',(ROOT/'Sources/FairyStackCompanion/main.swift').read_text())
         self.assertNotIn('com.fairystack.mac-commands',sources)
     def test_version_matches_bundle_and_updater(self):
         version=(ROOT/'VERSION').read_text().strip()
@@ -78,7 +79,7 @@ class WorkspaceWindowTests(unittest.TestCase):
         self.assertIn('parts.scheme == "https"',self.source)
         self.assertIn('applicationNameForUserAgent = "FairyStackMac/',self.source)
         self.assertIn('static let dragMessage = "fairystackDrag"',self.source)
-        self.assertIn('NSWorkspace.shared.open(url); decisionHandler(.cancel)',self.source,'other sites open in the default browser')
+        self.assertIn('launchExternal(url); decisionHandler(.cancel)',self.source,'other sites open in the default browser')
     def test_image_drag_downloads_are_bounded_and_fail_visibly(self):
         self.assertIn('timeoutIntervalForResource = 120',self.source)
         self.assertIn('status == 200',self.source)

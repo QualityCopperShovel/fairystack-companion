@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.6.0"
+let appVersion = "1.7.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -20,7 +20,14 @@ exit 1
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let commands = FairyStackCommands()
-    private lazy var workspace = WorkspaceWindows(version: appVersion, pairedOrigin: { [weak self] in self?.commands.pairedOrigin })
+    private lazy var workspace: WorkspaceWindows = {
+        let windows = WorkspaceWindows(version: appVersion, pairedOrigin: { [weak self] in self?.commands.pairedOrigin })
+        windows.connectLocal = { [weak self] origin, token, window, completion in
+            guard let self else { completion("FairyStack closed."); return }
+            self.commands.connectFromWindow(origin: origin, token: token, window: window, completion: completion)
+        }
+        return windows
+    }()
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let updateItem = NSMenuItem(title: "Check for updates", action: #selector(checkUpdates), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Open at login", action: #selector(toggleLogin), keyEquivalent: "")

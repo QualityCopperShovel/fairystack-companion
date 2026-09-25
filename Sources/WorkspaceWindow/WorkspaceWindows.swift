@@ -104,6 +104,8 @@ private final class ImageOriginRedirects: NSObject, URLSessionTaskDelegate {
 
 final class WorkspaceWebView: WKWebView {
     var workspaceOrigin: URL?
+    var isAuxiliary = false
+    weak var opener: WorkspaceWebView?
     var draggable: DraggableImage?
     let dragSource = ImageFileDragSource()
     private var pressed: (event: NSEvent, image: DraggableImage)?
@@ -147,8 +149,18 @@ final class WorkspaceWebView: WKWebView {
     }
 }
 
-public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate, NSMenuDelegate {
+enum LocalPairingRequest {
+    static func token(_ body: Any, frameURL: URL, origin: URL, mainFrame: Bool) -> String? {
+        guard mainFrame, WorkspaceAddress.sameOrigin(frameURL, origin), frameURL.path == "/companions",
+              let fields = body as? [String: String], fields.count == 1,
+              let token = fields["token"], token.range(of: "^fs_mac_[A-Za-z0-9_-]{20,90}$", options: .regularExpression) != nil else { return nil }
+        return token
+    }
+}
+
+public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, WKDownloadDelegate, NSMenuDelegate {
     static let dragMessage = "fairystackDrag"
+    public var connectLocal: ((URL, String, NSWindow, @escaping (String?) -> Void) -> Void)?
     static let openKey = "workspaceWindowOpen"
     private let version: String
     private let pairedOrigin: () -> URL?
@@ -157,10 +169,19 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private var restoring = false
     private var menuAnchors: [ObjectIdentifier: NSMenuItem] = [:]
     private var pages: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []
+    private var auxiliaries: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []
+    // Injectable LaunchServices boundary: internal bootstrap URLs must never reach it.
+    var openExternal: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    private func launchExternal(_ url: URL) {
+        guard ["https", "http", "mailto", "tel"].contains(url.scheme?.lowercased() ?? ""),
+              url.user == nil, url.password == nil else { return }
+        openExternal(url)
+    }
     private var downloads: [ObjectIdentifier: URL] = [:]
     private lazy var content: WKUserContentController = {
         let controller = WKUserContentController()
         controller.add(WeakMessageHandler(self), name: Self.dragMessage)
+        controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
         return controller
     }()
 
@@ -341,7 +362,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     @discardableResult
-    private func open(_ request: URLRequest?, origin: URL, configuration: WKWebViewConfiguration?, activate: Bool = true) -> WorkspaceWebView {
+    private func open(_ request: URLRequest?, origin: URL, configuration: WKWebViewConfiguration?, activate: Bool = true, opener: WorkspaceWebView? = nil) -> WorkspaceWebView {
         let config = configuration ?? {
             let config = WKWebViewConfiguration()
             config.websiteDataStore = origin.host == WorkspaceAddress.trialOrigin.host ? .nonPersistent() : .default()
@@ -350,8 +371,12 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
             config.preferences.isElementFullscreenEnabled = true
             return config
         }()
+        // A popup keeps WebKit's supplied configuration/process pool and storage, but
+        // receives no native image bridge or scripts from the workspace.
+        if opener != nil { config.userContentController = WKUserContentController() }
         let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 860), configuration: config)
         view.workspaceOrigin = origin
+        view.isAuxiliary = opener != nil; view.opener = opener
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
         view.dragSource.failed = { [weak self, weak view] message in self?.alert("Image not saved", message, for: view?.window) }
@@ -360,10 +385,14 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         window.title = "FairyStack · \(origin.host ?? "")"; window.contentView = view; window.delegate = self
         if pages.isEmpty { if !window.setFrameUsingName("FairyStackWorkspace") { window.center() }; window.setFrameAutosaveName("FairyStackWorkspace") }
         else if let last = pages.last?.window { window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: last.frame.minX, y: last.frame.maxY))) }
-        let title = view.observe(\.title) { [weak window] view, _ in window?.title = "\((view.title ?? "").isEmpty ? "FairyStack" : view.title!) · \(origin.host ?? "")" }
-        pages.append((window, view, title))
+        let title = view.observe(\.title) { [weak window] view, _ in
+            let host = view.isAuxiliary ? (view.url?.host ?? origin.host) : origin.host
+            window?.title = "\((view.title ?? "").isEmpty ? "FairyStack" : view.title!) · \(host ?? "")"
+        }
+        if view.isAuxiliary { auxiliaries.append((window, view, title)) }
+        else { pages.append((window, view, title)) }
         if let request { view.load(request) }
-        if !restoring { focusedView = view; store.select(origin); persistWindows() }
+        if !restoring && !view.isAuxiliary { focusedView = view; store.select(origin); persistWindows() }
         store.defaults.set(true, forKey: Self.openKey)
         NSApp.setActivationPolicy(.regular)
         if activate { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) } else { window.orderFront(nil) }
@@ -371,8 +400,19 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     }
 
     public func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, let index = pages.firstIndex(where: { $0.window === window }) else { return }
+        guard let window = notification.object as? NSWindow else { return }
+        if let index = auxiliaries.firstIndex(where: { $0.window === window }) {
+            let view = auxiliaries[index].view
+            for child in auxiliaries.filter({ $0.view.opener === view }) { child.window.close() }
+            view.stopLoading()
+            auxiliaries.removeAll { $0.view === view }
+            // Closing native chrome must update the opener's WindowProxy too.
+            view.evaluateJavaScript("window.close()", completionHandler: nil)
+            return
+        }
+        guard let index = pages.firstIndex(where: { $0.window === window }) else { return }
         if terminating { return }
+        for child in auxiliaries.filter({ $0.view.opener === pages[index].view }) { child.window.close() }
         if focusedView === pages[index].view { focusedView = nil }
         pages[index].view.stopLoading(); pages.remove(at: index)
         persistWindows()
@@ -386,16 +426,35 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         guard let origin = (view as? WorkspaceWebView)?.workspaceOrigin else { return false }
         if WorkspaceAddress.sameOrigin(url, origin) { return true }
         guard url.scheme == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
-        return host == "authreturn.com" || host.hasSuffix(".authreturn.com")
+        guard (url.port ?? 443) == 443 else { return false }
+        if host == "authreturn.com" || host.hasSuffix(".authreturn.com") { return true }
+        return (view as? WorkspaceWebView)?.isAuxiliary == true && host == "voice-feed.aisloppy.com"
     }
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == Self.dragMessage, let view = message.webView as? WorkspaceWebView,
-              let origin = view.workspaceOrigin, message.frameInfo.isMainFrame,
+              !view.isAuxiliary, let origin = view.workspaceOrigin, message.frameInfo.isMainFrame,
               message.frameInfo.securityOrigin.protocol == "https",
               message.frameInfo.securityOrigin.host.lowercased() == origin.host,
               (message.frameInfo.securityOrigin.port == (origin.port ?? 443) || (message.frameInfo.securityOrigin.port == 0 && origin.port == nil)) else { return }
         view.draggable = DraggableImage(message.body, origin: origin)
+    }
+
+    public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                                      replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.name == "fairystackPair", let view = message.webView as? WorkspaceWebView,
+              let origin = view.workspaceOrigin, let window = view.window,
+              message.frameInfo.isMainFrame, let frameURL = message.frameInfo.request.url,
+              WorkspaceAddress.sameOrigin(frameURL, origin), frameURL.path == "/companions",
+              message.frameInfo.securityOrigin.protocol == "https",
+              message.frameInfo.securityOrigin.host.lowercased() == origin.host,
+              (message.frameInfo.securityOrigin.port == (origin.port ?? 443) || (message.frameInfo.securityOrigin.port == 0 && origin.port == nil)),
+              let token = LocalPairingRequest.token(message.body, frameURL: frameURL, origin: origin, mainFrame: message.frameInfo.isMainFrame),
+              let connectLocal else { replyHandler(nil, "Local pairing is only available from this stack’s Connect window."); return }
+        connectLocal(origin, token, window) { error in
+            if let error { replyHandler(nil, error) }
+            else { replyHandler(["state": "connecting"], nil) }
+        }
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -404,10 +463,11 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
             guard let origin = (webView as? WorkspaceWebView)?.workspaceOrigin, WorkspaceAddress.sameOrigin(url, origin) else { return decisionHandler(.cancel) }
             return decisionHandler(.download)
         }
-        if action.targetFrame?.isMainFrame == false || ["about", "blob", "data"].contains(url.scheme ?? "") || allowedInWindow(url, view: webView) {
+        let approvalPopup = action.targetFrame == nil && WorkspaceAddress.sameOrigin(url, URL(string: "https://voice-feed.aisloppy.com")!)
+        if approvalPopup || action.targetFrame?.isMainFrame == false || ["about", "blob", "data"].contains(url.scheme ?? "") || allowedInWindow(url, view: webView) {
             return decisionHandler(.allow)
         }
-        NSWorkspace.shared.open(url); decisionHandler(.cancel)
+        launchExternal(url); decisionHandler(.cancel)
     }
     public func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
@@ -441,9 +501,14 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let url = action.request.url else { return nil }
-        guard allowedInWindow(url, view: webView) else { NSWorkspace.shared.open(url); return nil }
-        guard let origin = (webView as? WorkspaceWebView)?.workspaceOrigin else { return nil }
-        return open(nil, origin: origin, configuration: configuration)
+        guard let parent = webView as? WorkspaceWebView, let origin = parent.workspaceOrigin else { return nil }
+        // window.open('about:blank') is a bootstrap, followed asynchronously by
+        // the verified approval URL. Returning nil loses the live WindowProxy.
+        let voiceApproval = WorkspaceAddress.sameOrigin(url, URL(string: "https://voice-feed.aisloppy.com")!)
+        guard url.absoluteString == "about:blank" || allowedInWindow(url, view: parent) || voiceApproval else {
+            launchExternal(url); return nil
+        }
+        return open(nil, origin: origin, configuration: configuration, opener: parent)
     }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { persistWindows() }
     public func webViewDidClose(_ webView: WKWebView) { webView.window?.close() }
@@ -509,5 +574,15 @@ final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: WKScriptMessageHandler) { self.target = target }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(controller, didReceive: message)
+    }
+}
+
+final class WeakReplyMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
+    private weak var target: WKScriptMessageHandlerWithReply?
+    init(_ target: WKScriptMessageHandlerWithReply) { self.target = target }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let target else { replyHandler(nil, "The Connect window closed."); return }
+        target.userContentController(controller, didReceive: message, replyHandler: replyHandler)
     }
 }

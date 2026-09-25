@@ -308,3 +308,108 @@ final class SavedStackTests: XCTestCase {
         store.remove(origin); XCTAssertTrue(store.windows.isEmpty)
     }
 }
+
+// Exercises WebKit's actual WindowProxy bootstrap and delayed navigation. No live
+// account is mutated: the probe records the production policy, then cancels I/O.
+private final class PopupPolicyProbe: NSObject, WKNavigationDelegate {
+    let windows: WorkspaceWindows
+    var decisions: [(URL, WKNavigationActionPolicy)] = []
+    init(_ windows: WorkspaceWindows) { self.windows = windows }
+    func webView(_ view: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        windows.webView(view, decidePolicyFor: action) { policy in
+            if let url = action.request.url { self.decisions.append((url, policy)) }
+            decisionHandler(.cancel)
+        }
+    }
+}
+
+final class ApprovalPopupTests: XCTestCase {
+    private func spin(_ ready: () -> Bool, timeout: TimeInterval = 8) {
+        let end = Date().addingTimeInterval(timeout)
+        while !ready() && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertTrue(ready(), "WebKit operation reached its deadline")
+    }
+    @discardableResult
+    private func js(_ view: WKWebView, _ source: String) -> Any? {
+        var done = false, result: Any?
+        view.evaluateJavaScript(source) { value, error in
+            XCTAssertNil(error); result = value; done = true
+        }
+        spin({ done }); return result
+    }
+    func testBlankBootstrapDelayedApprovalExternalSafetyAndClose() throws {
+        _ = NSApplication.shared
+        let suite = "FairyStackPopupTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let second = URL(string: "https://other.fairystack.com")!
+        let store = SavedStacks(defaults: defaults); store.add(origin); store.add(second)
+        let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        var launched: [URL] = []; windows.openExternal = { launched.append($0) }
+        let parent = windows.openStack(origin, activate: false)
+        let other = windows.openStack(second, activate: false)
+        parent.stopLoading(); other.stopLoading()
+        parent.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let loaded = expectation(description: "opener fixture loaded")
+        let waiter = LoadWaiter { loaded.fulfill() }; parent.navigationDelegate = waiter
+        parent.loadHTMLString("<title>Composer fixture</title><textarea>keep draft</textarea>", baseURL: origin)
+        wait(for: [loaded], timeout: 15); parent.navigationDelegate = windows
+        defer { parent.window?.close(); other.window?.close() }
+        XCTAssertEqual(js(parent, "window.approval = window.open('about:blank', 'voice-feed-connect', 'popup,width=540,height=760'); !!approval && !approval.closed") as? Bool, true)
+        var popup: WorkspaceWebView?
+        spin({
+            popup = NSApp.windows.compactMap { $0.contentView as? WorkspaceWebView }.first { $0.opener === parent }
+            return popup != nil
+        })
+        let approval = try XCTUnwrap(popup)
+        XCTAssertTrue(approval.isAuxiliary); XCTAssertEqual(approval.workspaceOrigin, origin)
+        XCTAssertEqual(windows.origin, second, "popup never switches the focused saved stack")
+        XCTAssertEqual(SavedStacks(defaults: defaults).windows.map(\.origin), [origin, second], "approval never restores as a workspace")
+        XCTAssertTrue(launched.isEmpty, "about:blank must not reach LaunchServices")
+        let probe = PopupPolicyProbe(windows); approval.navigationDelegate = probe
+        js(parent, "setTimeout(() => { approval.location = 'https://voice-feed.aisloppy.com/?connect=fixture'; }, 100); void 0")
+        spin({ probe.decisions.contains { $0.0.host == "voice-feed.aisloppy.com" } })
+        XCTAssertEqual(probe.decisions.last?.1, .allow)
+        XCTAssertEqual(js(parent, "!approval.closed") as? Bool, true, "approval stays alive while status polling runs")
+        XCTAssertFalse(windows.allowedInWindow(URL(string: "https://voice-feed.aisloppy.com/")!, view: parent))
+        XCTAssertTrue(windows.allowedInWindow(URL(string: "https://authreturn.com/login")!, view: approval))
+        for bad in ["https://voice-feed.aisloppy.com.evil.test/", "https://voice-feed.aisloppy.com:444/", "https://user@voice-feed.aisloppy.com/", second.absoluteString] {
+            XCTAssertFalse(windows.allowedInWindow(URL(string: bad)!, view: approval), bad)
+        }
+        js(parent, "approval.location = 'https://external.example/'; void 0")
+        spin({ launched.count == 1 })
+        XCTAssertEqual(launched.first?.host, "external.example")
+        XCTAssertEqual(probe.decisions.last?.1, .cancel)
+        XCTAssertEqual(js(parent, "!approval.closed && document.querySelector('textarea').value === 'keep draft'") as? Bool, true)
+        js(parent, "approval.close(); void 0")
+        spin({ approval.window == nil || approval.window?.isVisible == false })
+        XCTAssertEqual(js(parent, "approval.closed") as? Bool, true)
+        XCTAssertEqual(SavedStacks(defaults: defaults).windows.count, 2)
+        XCTAssertTrue(launched.allSatisfy { $0.scheme == "https" })
+        // Native close-button cancellation also sets .closed for the polling owner.
+        js(parent, "window.approval = window.open('about:blank', 'voice-feed-connect', 'popup'); void 0")
+        var retry: WorkspaceWebView?
+        spin({
+            retry = NSApp.windows.compactMap { $0.contentView as? WorkspaceWebView }.first { $0.opener === parent && $0.window?.isVisible == true }
+            return retry != nil
+        })
+        retry?.window?.close()
+        spin({ self.js(parent, "approval.closed") as? Bool == true })
+    }
+}
+
+final class LocalPairingRequestTests: XCTestCase {
+    func testOnlyTheOwnedConnectPageCanRequestPairing() {
+        let token = "fs_mac_" + String(repeating: "a", count: 43)
+        let page = origin.appendingPathComponent("companions")
+        XCTAssertEqual(LocalPairingRequest.token(["token":token], frameURL:page, origin:origin, mainFrame:true), token)
+        XCTAssertNil(LocalPairingRequest.token(["token":token], frameURL:page, origin:origin, mainFrame:false))
+        for url in [origin, URL(string:"https://evil.test/companions")!, URL(string:"http://you.fairystack.com/companions")!, URL(string:"https://you.fairystack.com:444/companions")!] {
+            XCTAssertNil(LocalPairingRequest.token(["token":token], frameURL:url, origin:origin, mainFrame:true))
+        }
+        for body in [["token":"bad"], ["token":token,"origin":"https://evil.test"], ["token":1], NSNull()] as [Any] {
+            XCTAssertNil(LocalPairingRequest.token(body, frameURL:page, origin:origin, mainFrame:true))
+        }
+    }
+}
