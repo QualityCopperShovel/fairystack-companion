@@ -471,7 +471,11 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     func allowedInWindow(_ url: URL, view: WKWebView) -> Bool {
         guard let origin = (view as? WorkspaceWebView)?.workspaceOrigin else { return false }
-        if WorkspaceAddress.sameOrigin(url, origin) { return true }
+        if WorkspaceAddress.sameOrigin(url, origin) {
+            // Page links explicitly leave the workspace, even on its own origin.
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return !query.contains { ["browser", "focused"].contains($0.name) && $0.value == "1" }
+        }
         guard url.scheme == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
         guard (url.port ?? 443) == 443 else { return false }
         if host == "authreturn.com" || host.hasSuffix(".authreturn.com") { return true }

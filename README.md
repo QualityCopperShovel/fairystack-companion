@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.12.0
+# FairyStack for Mac 1.12.1
 
 Version 1.10 records content-free crash and capture evidence. The signed-in
 workspace relays macOS crash type, app image UUID/offsets, WebKit process exits,
@@ -133,3 +133,7 @@ Website links open in your operating system’s default browser, using its exist
 sign-ins, extensions and bookmarks. FairyStack keeps its own workspace and sign-in
 windows; it does not provide a separate browser, tabs or website profile. To share
 a page with the agent, copy its link or selected text into your conversation.
+
+Profile and other standalone page links (`focused=1` or `browser=1`) also open in
+the default browser, even when they share the workspace origin. Chat and the Connect
+pairing page remain in FairyStack.

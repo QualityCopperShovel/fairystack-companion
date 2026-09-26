@@ -417,6 +417,18 @@ final class ApprovalPopupTests: XCTestCase {
         spin({ launched.count == 2 })
         XCTAssertEqual(launched.last?.path, "/from-workspace")
         XCTAssertEqual(js(parent, "document.querySelector('textarea').value") as? String, "keep draft")
+        // Same-origin profile/browser links hand off to the OS, preserving the workspace.
+        for query in ["?profile=1&focused=1", "?apps=1&focused=1", "?session=a&browser=1", "?focused=0&focused=1"] {
+            let url = URL(string: "/" + query, relativeTo: origin)!.absoluteURL
+            XCTAssertFalse(windows.allowedInWindow(url, view: parent))
+        }
+        XCTAssertTrue(windows.allowedInWindow(URL(string: "/?chat=1", relativeTo: origin)!.absoluteURL, view: parent))
+        XCTAssertTrue(windows.allowedInWindow(origin.appendingPathComponent("companions"), view: parent))
+        js(parent, "window.open('/?profile=1&focused=1', '_blank'); void 0")
+        spin({ launched.count == 3 })
+        XCTAssertEqual(launched.last?.query, "profile=1&focused=1")
+        XCTAssertEqual(js(parent, "document.querySelector('textarea').value") as? String, "keep draft")
+        XCTAssertEqual(NSApp.windows.compactMap { $0.contentView as? WorkspaceWebView }.filter { $0.opener === parent && $0.window?.isVisible == true }.count, 0)
         // Native close-button cancellation also sets .closed for the polling owner.
         js(parent, "window.approval = window.open('about:blank', 'voice-feed-connect', 'popup'); void 0")
         var retry: WorkspaceWebView?
