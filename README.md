@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.10.0
+# FairyStack for Mac 1.11.0
 
 Version 1.10 records content-free crash and capture evidence. The signed-in
 workspace relays macOS crash type, app image UUID/offsets, WebKit process exits,
@@ -40,8 +40,7 @@ in FairyStack's live agent guide, FairyStack for Mac section.
 ## FairyStack window
 
 Fairy menu-bar icon → Open FairyStack window shows your FairyStack (https origin only) in a
-WebKit window with its own Dock icon while open. Other sites open in your default
-browser. Drag a conversation image to Finder to save the full-resolution original:
+WebKit window with its own Dock icon while open. Other sites open in the separate FairyStack Browser window. Drag a conversation image to Finder to save the full-resolution original:
 the page announces the hovered image with a short-lived signed link, and the app
 downloads it through a file promise (two-minute limit; failures show an alert).
 A plain click still opens the image viewer. Downloads go to ~/Downloads.
@@ -127,3 +126,26 @@ Version 1.1.1 replaces the generic link icon with FairyStack's fairy in the Dock
 menu bar. Version 1.1.0 added the FairyStack window. The installer upgrades an older verified
 installation in place when the app is not running, because the 1.0.1 updater
 cannot verify its own replacement.
+
+## Website browser
+
+The Browser menu or menu-bar fairy opens a dedicated website window with tabs, an
+address/search field, Back/Forward, bookmarks and tab restore after quitting.
+Command-T opens a tab, Command-L focuses the address, Command-W closes a tab,
+Command-D bookmarks, and Command-0 returns to the workspace. Google handles
+address-field searches. Open externally sends the current URL to the OS default browser.
+
+Share page appends the title, URL and selected text to the current conversation
+draft; it never submits a message. If no composer is available, the copied page
+can be pasted after sign-in. Website tabs have no native pairing, command,
+diagnostics or workspace microphone bridge. They share WebKit's local cookie
+store so existing website sign-ins work. Camera access is disabled in this build;
+use Open externally for camera-dependent sites. Extensions and importing Chrome
+profiles are not implemented.
+
+Page loads terminate after 60 seconds; downloads after two minutes. A website
+process failure offers a manual retry. Closing a tab discards that tab, while
+quitting restores successfully loaded URLs and bookmarks, excluding one-time
+AuthReturn handoffs. Live form state stays intact when switching tabs but is not
+persisted across quitting. Automatic update activation waits while the browser
+window is open or a download is running.
