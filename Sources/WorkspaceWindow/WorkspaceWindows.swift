@@ -169,20 +169,21 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private let version: String
     private let pairedOrigin: () -> URL?
     private let store: SavedStacks
+    lazy var microphoneConsent = MicrophoneConsent(store: store)
     private var focusedView: WorkspaceWebView?
     let microphone = MicrophoneOwnership()
     // Read the existing page lifecycle owner; never restart during recording,
     // permission startup, uploads, or a cross-window microphone transfer.
     public func canRestartForUpdate(completion: @escaping (Bool) -> Void) {
         let views = (pages + auxiliaries).map { $0.view } + (microphone.owner.map { [$0] } ?? [])
-        guard !microphone.isTransferring, views.allSatisfy({ $0.microphoneCaptureState == .none }) else {
+        guard !microphoneConsent.hasPending, !microphone.isTransferring, views.allSatisfy({ $0.microphoneCaptureState == .none }) else {
             completion(false); return
         }
         guard !views.isEmpty else { completion(true); return }
         var remaining = views.count, finished = false
         let finish: (Bool) -> Void = { ready in
             guard !finished else { return }; finished = true
-            completion(ready && !self.microphone.isTransferring && views.allSatisfy { $0.microphoneCaptureState == .none })
+            completion(ready && !self.microphoneConsent.hasPending && !self.microphone.isTransferring && views.allSatisfy { $0.microphoneCaptureState == .none })
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(false) }
         for view in views {
@@ -226,7 +227,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         persistWindows()
         return NSApp.isActive ? ["--fairystack-activate"] : []
     }
-    public var terminating = false { didSet { if terminating { persistWindows() } } }
+    public var terminating = false { didSet { if terminating { microphoneConsent.cancelAll(); persistWindows() } } }
     private var resumeURL: URL?
     private var activateOnResume = false
     public func adopt(_ arguments: [String]) {
@@ -327,7 +328,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         for entry in store.entries { submenu.addItem(stackItem(entry, action: #selector(newStackWindow(_:)))) }
         fresh.submenu = submenu; fresh.isEnabled = !store.entries.isEmpty; insert(fresh)
         if let origin, origin != WorkspaceAddress.trialOrigin {
-            for (title, action) in [("Rename this stack…", #selector(renameStack)), ("Forget this stack", #selector(forgetStack))] {
+            for (title, action) in [("Rename this stack…", #selector(renameStack)), ("Forget this stack", #selector(forgetStack)), ("Reset microphone permission for this stack", #selector(resetMicrophonePermission))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; insert(item)
             }
         }
@@ -352,7 +353,12 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         guard dialog.runModal() == .alertFirstButtonReturn else { return }
         guard store.rename(origin, to: field.stringValue) else { alert("Name not saved", "Use 1–80 readable characters, without control or directional formatting characters.", for: current?.window); return }
     }
-    @objc private func forgetStack() { if let origin { store.remove(origin); persistWindows() } }
+    @objc private func resetMicrophonePermission() { if let origin { clearMicrophoneConsent(origin) } }
+    private func clearMicrophoneConsent(_ origin: URL) {
+        microphoneConsent.reset(origin)
+        for page in pages where page.view.workspaceOrigin == origin { page.view.setMicrophoneCaptureState(.none) }
+    }
+    @objc private func forgetStack() { if let origin { clearMicrophoneConsent(origin); store.remove(origin); persistWindows() } }
     private func welcome() -> URL? {
         NSApp.activate(ignoringOtherApps: true)
         let dialog = NSAlert(); dialog.messageText = "Welcome to FairyStack"
@@ -437,6 +443,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        if let view = window.contentView as? WorkspaceWebView { microphoneConsent.cancel(owner: view) }
         if let index = auxiliaries.firstIndex(where: { $0.window === window }) {
             let view = auxiliaries[index].view
             for child in auxiliaries.filter({ $0.view.opener === view }) { child.window.close() }
@@ -530,7 +537,10 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { loadFailed(webView, error) }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { loadFailed(webView, error) }
-    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { webView.reload() }
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        microphoneConsent.cancel(owner: webView)
+        webView.reload()
+    }
 
     private func loadFailed(_ webView: WKWebView, _ error: Error) {
         let error = error as NSError
@@ -560,6 +570,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         }
         return open(nil, origin: origin, configuration: configuration, opener: parent)
     }
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { microphoneConsent.cancel(owner: webView) }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { persistWindows() }
     public func webViewDidClose(_ webView: WKWebView) { webView.window?.close() }
     // Microphone permission belongs only to this saved stack's main frame.
@@ -580,7 +591,11 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         // Old pages may still request capture without the preflight bridge. They
         // can acquire an idle Mac, but must never mute another workspace.
         guard microphone.admitPermission(workspace) else { decisionHandler(.deny); return }
-        decisionHandler(.prompt)
+        microphoneConsent.request(owner: workspace, origin: origin, window: webView.window, valid: { [weak self, weak workspace] in
+            guard let workspace, !workspace.isAuxiliary, workspace.workspaceOrigin == origin,
+                  let current = workspace.url else { return false }
+            return WorkspaceAddress.sameOrigin(current, origin) && self?.microphone.admitPermission(workspace) == true
+        }, reply: decisionHandler)
     }
 
     public func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {

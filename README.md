@@ -1,4 +1,4 @@
-# FairyStack for Mac 1.9.2
+# FairyStack for Mac 1.9.3
 
 Updates download automatically and activate once recording, uploads and local commands finish.
 
@@ -6,7 +6,12 @@ The official FairyStack client for macOS 13+: FairyStack.app, bundle
 com.fairystack.companion (kept from its Companion era). It opens your
 FairyStack in a native window and can optionally run agent commands on this Mac.
 The workspace microphone uses your signed-in FairyStack account and this Mac's
-microphone after explicit macOS/WebKit permission. No separate Voice Feed signup
+microphone after explicit per-stack and macOS permission. Choose **Allow and Remember**
+once for each saved stack; that choice survives reloads, new windows and updates.
+The FairyStack menu's **Reset microphone permission for this stack** clears the choice
+and stops capture. Forgetting a stack does the same. Trial consent stays temporary.
+Existing installations ask once after this update because older WebKit choices were
+not recorded by the app. No separate Voice Feed signup
 is required. Camera and cross-origin microphone requests are denied. Existing
 standalone Voice Feed accounts and devices remain separate. Source lives
 with FairyStack. Existing hosted Mac builders receive only this credential-free
@@ -17,8 +22,7 @@ sign/notarize the universal app.
 Build with `swift build -c release`; `swift test` exercises WebKit mouse routing
 and image file promises, nil-request Objective-C permission callbacks (including an
 isolated reproduction of the old Foundation trap), and real WebKit getUserMedia
-with mock devices and bounded no-hardware/denial cases. Mock consent never replaces
-the production permission prompt; physical microphone capture requires a real Mac.
+with mock devices and bounded no-hardware/denial cases. Tests simulate the native consent sheet; physical microphone capture requires a real Mac.
 Behavioral process tests use
 `python3 -m unittest discover -s tests -v`. The checked-in Info.plist and icon
 source define the signed app bundle. Download and pairing links are documented

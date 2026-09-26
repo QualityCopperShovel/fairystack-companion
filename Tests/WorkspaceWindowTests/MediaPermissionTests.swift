@@ -33,13 +33,18 @@ final class MediaPermissionBoundaryTests: XCTestCase {
     private var suite = ""
     private var defaults: UserDefaults!
     private var windows: WorkspaceWindows!
+    private var hosts: [NSWindow] = []
     override func setUp() {
         _ = NSApplication.shared
         suite = "FairyStackCaptureTests." + UUID().uuidString
         defaults = UserDefaults(suiteName: suite)!
+        SavedStacks(defaults: defaults).add(WorkspaceAddress.parse(stack.absoluteString)!)
+        // Recreate the owner after saving: installation/OS status alone never grants a site.
         windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        windows.microphoneConsent.systemAllowsRequest = { true }
+        windows.microphoneConsent.present = { _, _, done in done(true); return {} }
     }
-    override func tearDown() { defaults.removePersistentDomain(forName: suite) }
+    override func tearDown() { hosts.forEach { $0.close() }; defaults.removePersistentDomain(forName: suite) }
 
     private func spin(_ ready: () -> Bool, timeout: TimeInterval = 15) {
         let deadline = Date().addingTimeInterval(timeout)
@@ -48,7 +53,9 @@ final class MediaPermissionBoundaryTests: XCTestCase {
     }
     private func view(page: URL = stack) -> WorkspaceWebView {
         let view = WorkspaceWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        view.workspaceOrigin = stack
+        view.workspaceOrigin = WorkspaceAddress.parse(stack.absoluteString)!
+        let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        host.isReleasedWhenClosed = false; host.contentView = view; hosts.append(host)
         let waiter = CaptureLoadWaiter(); view.navigationDelegate = waiter
         view.loadHTMLString("<title>Permission boundary</title>", baseURL: page)
         spin { waiter.finished }; XCTAssertNil(waiter.error)
@@ -66,8 +73,8 @@ final class MediaPermissionBoundaryTests: XCTestCase {
     func testNilRequestCrossesTheObjectiveCDelegateThunkWithoutReadingRequest() {
         let view = view(), origin = FSOrigin("https", "capture.fairystack.com", 0)
         let frame = FSNilRequestFrame(true, origin, view)
-        check(view, frame, origin, .prompt)
-        check(view, frame, FSOrigin("https", "CAPTURE.FAIRYSTACK.COM", 443), .prompt)
+        check(view, frame, origin, .grant)
+        check(view, frame, FSOrigin("https", "CAPTURE.FAIRYSTACK.COM", 443), .grant)
         for type in [WKMediaCaptureType.camera, .cameraAndMicrophone] { check(view, frame, origin, .deny, type: type) }
         for bad in [FSOrigin("http", "capture.fairystack.com", 0), FSOrigin("https", "evil.test", 443),
                     FSOrigin("https", "capture.fairystack.com", 444), FSOrigin("", "", 0)] {
@@ -89,13 +96,33 @@ final class MediaPermissionBoundaryTests: XCTestCase {
             check(view, FSNilRequestFrame(true, origin, view), origin, .deny)
         }
         let view = view(page: URL(string: "https://capture.fairystack.com:8443/")!)
-        view.workspaceOrigin = URL(string: "https://capture.fairystack.com:8443/")!
+        view.workspaceOrigin = WorkspaceAddress.parse("https://capture.fairystack.com:8443")!
+        SavedStacks(defaults: defaults).add(view.workspaceOrigin!)
+        windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        windows.microphoneConsent.systemAllowsRequest = { true }
+        windows.microphoneConsent.present = { _, _, done in done(true); return {} }
         let custom = FSOrigin("https", "capture.fairystack.com", 8443)
-        check(view, FSNilRequestFrame(true, custom, view), custom, .prompt)
+        check(view, FSNilRequestFrame(true, custom, view), custom, .grant)
         check(view, FSNilRequestFrame(true, origin, view), custom, .deny)
         check(view, FSNilRequestFrame(true, custom, view), origin, .deny)
         let unloaded = WorkspaceWebView(); unloaded.workspaceOrigin = stack
         check(unloaded, FSNilRequestFrame(true, origin, unloaded), origin, .deny)
+    }
+    func testDelegateNavigationAndWindowCloseCancelPendingConsent() {
+        let view = view(), origin = FSOrigin("https", "capture.fairystack.com", 0)
+        var response: ((Bool) -> Void)?, decisions: [WKPermissionDecision] = []
+        windows.microphoneConsent.present = { _, _, done in response = done; return {} }
+        let frame = FSNilRequestFrame(true, origin, view)
+        FSRequestPermission(windows, view, origin, frame, .microphone) { decisions.append($0) }
+        var ready: Bool?
+        windows.canRestartForUpdate { ready = $0 }
+        XCTAssertEqual(ready, false, "update cannot interrupt consent")
+        windows.webView(view, didStartProvisionalNavigation: nil); response?(true)
+        FSRequestPermission(windows, view, origin, frame, .microphone) { decisions.append($0) }
+        windows.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: view.window)); response?(true)
+        XCTAssertEqual(decisions, [.deny, .deny])
+        XCTAssertNil(defaults.dictionary(forKey: MicrophoneConsent.key))
+        XCTAssertEqual(FSRequestReads(frame), 0)
     }
     func testLegacyRequestBridgeCrashesOnlyInChild() throws {
         if ProcessInfo.processInfo.environment["FAIRYSTACK_LEGACY_CAPTURE_CRASH"] == "1" {
@@ -125,7 +152,7 @@ final class MediaPermissionBoundaryTests: XCTestCase {
 
 // This receives a genuine getUserMedia callback from a WebKit content process,
 // forwards it through the production delegate, then simulates consent/denial.
-// Only mocked devices may be granted. Production still returns .prompt, never .grant.
+// Only mocked devices may be granted. The production consent owner receives a simulated native choice.
 private final class CaptureProbe: NSObject, WKUIDelegate, WKScriptMessageHandler {
     let windows: WorkspaceWindows
     let acceptMock: Bool
@@ -138,7 +165,7 @@ private final class CaptureProbe: NSObject, WKUIDelegate, WKScriptMessageHandler
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         FSRequestPermission(windows, view, origin, frame, type) { decision in
             self.decisions.append(decision); self.frames.append(frame.isMainFrame)
-            decisionHandler(decision == .prompt && self.acceptMock ? .grant : .deny)
+            decisionHandler(decision == .grant && self.acceptMock ? .grant : .deny)
         }
     }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -153,7 +180,10 @@ final class MediaCaptureWebKitTests: XCTestCase {
         let suite = "FairyStackRealCaptureTests." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        SavedStacks(defaults: defaults).add(WorkspaceAddress.parse(stack.absoluteString)!)
         let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        windows.microphoneConsent.systemAllowsRequest = { true }
+        windows.microphoneConsent.present = { _, _, done in done(acceptMock && mock); return {} }
         let probe = CaptureProbe(windows, acceptMock: acceptMock)
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
         if mock && !FSConfigureMockCapture(config.preferences) {
@@ -161,7 +191,7 @@ final class MediaCaptureWebKitTests: XCTestCase {
         }
         config.userContentController.add(probe, name: "capture")
         let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: config)
-        view.workspaceOrigin = stack; view.isAuxiliary = popup; view.uiDelegate = probe
+        view.workspaceOrigin = WorkspaceAddress.parse(stack.absoluteString)!; view.isAuxiliary = popup; view.uiDelegate = probe
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = view; window.makeKeyAndOrderFront(nil)
         defer { view.stopLoading(); config.userContentController.removeScriptMessageHandler(forName: "capture"); window.close() }
@@ -187,24 +217,152 @@ final class MediaCaptureWebKitTests: XCTestCase {
     }
     func testRealMicrophoneCallbackPromptsThenUserDenialTerminates() throws {
         let probe = try capture()
-        XCTAssertEqual(probe.decisions, [.prompt]); XCTAssertEqual(probe.frames, [true])
+        XCTAssertEqual(probe.decisions, [.deny]); XCTAssertEqual(probe.frames, [true])
         XCTAssertEqual(probe.result, "NotAllowedError")
     }
     func testRealMicrophoneCallbackCanStartAndStopMockAudioAfterConsent() throws {
         let probe = try capture(acceptMock: true)
-        XCTAssertEqual(probe.decisions, [.prompt]); XCTAssertEqual(probe.result, "mock-capture-stopped")
+        XCTAssertEqual(probe.decisions, [.grant]); XCTAssertEqual(probe.result, "mock-capture-stopped")
     }
     func testRealSubframeCameraAndPopupAreDenied() throws {
         for probe in [try capture(subframe: true), try capture(popup: true), try capture(constraints: "{video:true}"), try capture(constraints: "{audio:true,video:true}")] {
             XCTAssertEqual(probe.decisions, [.deny]); XCTAssertEqual(probe.result, "NotAllowedError")
         }
     }
+    func testRealWebKitRemembersConsentAcrossReloadAndResetClearsCachedGrant() throws {
+        _ = NSApplication.shared
+        let suite = "CaptureReset." + UUID().uuidString, origin = WorkspaceAddress.parse(stack.absoluteString)!
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        SavedStacks(defaults: defaults).add(origin)
+        let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        windows.microphoneConsent.systemAllowsRequest = { true }
+        var prompts = 0, allow = true
+        windows.microphoneConsent.present = { _, _, done in prompts += 1; done(allow); return {} }
+        let probe = CaptureProbe(windows, acceptMock: true)
+        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+        guard FSConfigureMockCapture(config.preferences) else { return XCTFail("mock capture unavailable") }
+        config.userContentController.add(probe, name: "capture")
+        let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: config)
+        view.workspaceOrigin = origin; view.uiDelegate = probe; view.navigationDelegate = windows
+        let host = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        host.isReleasedWhenClosed = false; host.contentView = view; host.makeKeyAndOrderFront(nil)
+        defer { view.stopLoading(); config.userContentController.removeScriptMessageHandler(forName: "capture"); host.close() }
+        func waitFor(_ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(15)
+            while !condition() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            XCTAssertTrue(condition(), "WebKit lifecycle deadline")
+        }
+        let html = """
+        <script>
+        navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{
+          s.getTracks().forEach(t=>t.stop()); webkit.messageHandlers.capture.postMessage('stopped');
+        }).catch(e=>webkit.messageHandlers.capture.postMessage(e.name));
+        </script>
+        """
+        for _ in 0..<2 {
+            probe.result = nil; view.loadHTMLString(html, baseURL: origin)
+            waitFor { probe.result != nil }; XCTAssertEqual(probe.result, "stopped")
+        }
+        XCTAssertEqual(prompts, 1)
+        windows.microphoneConsent.reset(origin); allow = false
+        var reset = false; view.setMicrophoneCaptureState(.none) { reset = true }
+        waitFor { reset }
+        probe.result = nil; view.loadHTMLString(html, baseURL: origin)
+        waitFor { probe.result != nil }
+        XCTAssertEqual(probe.result, "NotAllowedError"); XCTAssertEqual(prompts, 2)
+        XCTAssertEqual(probe.decisions.last, .deny)
+    }
     func testNoHardwareCaptureTerminatesWithoutAnUnattendedPrompt() throws {
         let probe = try capture(mock: false)
         // Hosted machines may have no input device, so WebKit can reject before
         // consulting the delegate. Neither outcome is physical-capture evidence.
         XCTAssertTrue(["NotFoundError", "NotAllowedError", "NotReadableError"].contains(probe.result ?? ""))
-        XCTAssertTrue(probe.decisions.isEmpty || probe.decisions == [.prompt])
+        XCTAssertTrue(probe.decisions.isEmpty || probe.decisions == [.deny])
+    }
+}
+
+final class DurableMicrophoneConsentTests: XCTestCase {
+    private var suite: String!
+    private var defaults: UserDefaults!
+    private var store: SavedStacks!
+    private var consent: MicrophoneConsent!
+    private var window: NSWindow!
+    private let origin = WorkspaceAddress.parse("https://capture.fairystack.com")!
+    private var owner = NSObject()
+    override func setUp() {
+        _ = NSApplication.shared
+        suite = "ConsentLifecycle." + UUID().uuidString; defaults = UserDefaults(suiteName: suite)!
+        store = SavedStacks(defaults: defaults); store.add(origin)
+        consent = MicrophoneConsent(store: store); consent.systemAllowsRequest = { true }
+        window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+    }
+    override func tearDown() { consent.cancelAll(); window.close(); defaults.removePersistentDomain(forName: suite) }
+    private func request(_ target: URL? = nil, valid: @escaping () -> Bool = { true }, _ done: @escaping (WKPermissionDecision) -> Void) {
+        consent.request(owner: owner, origin: target ?? origin, window: window, valid: valid, reply: done)
+    }
+    func testExplicitConsentSurvivesNewRequestsWindowRecreationAndNewAppOwner() {
+        var prompts = 0
+        consent.present = { _, _, done in prompts += 1; done(true); return {} }
+        request { XCTAssertEqual($0, .grant) }
+        request { XCTAssertEqual($0, .grant) } // Next start / reload.
+        owner = NSObject(); request { XCTAssertEqual($0, .grant) } // New window.
+        consent = MicrophoneConsent(store: SavedStacks(defaults: UserDefaults(suiteName: suite)!))
+        consent.systemAllowsRequest = { true }
+        consent.present = { _, _, _ in XCTFail("relaunch/update lost consent"); return {} }
+        request { XCTAssertEqual($0, .grant) }
+        XCTAssertEqual(prompts, 1)
+        consent.systemAllowsRequest = { false }; request { XCTAssertEqual($0, .deny) }
+    }
+    func testDenialResetForgetAndNoInferenceFromSystemPermission() {
+        var prompts = 0
+        consent.present = { _, _, done in prompts += 1; done(false); return {} }
+        request { XCTAssertEqual($0, .deny) }; request { XCTAssertEqual($0, .deny) }
+        XCTAssertEqual(prompts, 1)
+        consent.reset(origin)
+        consent.present = { _, _, done in prompts += 1; done(true); return {} }
+        request { XCTAssertEqual($0, .grant) }; XCTAssertEqual(prompts, 2)
+        store.remove(origin); request { XCTAssertEqual($0, .deny) }
+        store.add(origin); request { XCTAssertEqual($0, .grant) }; XCTAssertEqual(prompts, 3)
+    }
+    func testOriginsPortsAndTrialNeverInheritConsent() {
+        consent.present = { _, _, done in done(true); return {} }
+        request { XCTAssertEqual($0, .grant) }
+        for text in ["https://other.fairystack.com", "https://capture.fairystack.com:8443"] {
+            request(WorkspaceAddress.parse(text)!) { XCTAssertEqual($0, .deny) }
+        }
+        request(WorkspaceAddress.trialOrigin) { XCTAssertEqual($0, .prompt) }
+        XCTAssertEqual(defaults.dictionary(forKey: MicrophoneConsent.key)?.count, 1)
+    }
+    func testDuplicateRequestsCancelOnceAndLateAllowCannotPersist() {
+        var response: ((Bool) -> Void)?, prompts = 0, cancelled = 0, results: [WKPermissionDecision] = []
+        consent.present = { _, _, done in prompts += 1; response = done; return { cancelled += 1 } }
+        request { results.append($0) }; request { results.append($0) }
+        XCTAssertEqual(prompts, 1)
+        consent.cancel(owner: owner) // Navigation, window close, or process termination.
+        response?(true); response?(true)
+        XCTAssertEqual(results, [.deny, .deny]); XCTAssertEqual(cancelled, 1)
+        XCTAssertNil(defaults.dictionary(forKey: MicrophoneConsent.key))
+    }
+    func testStaleNavigationRevocationAndResetDuringPromptDeny() {
+        var response: ((Bool) -> Void)?, valid = true, results: [WKPermissionDecision] = []
+        consent.present = { _, _, done in response = done; return {} }
+        request(valid: { valid }) { results.append($0) }; valid = false; response?(true)
+        valid = true; request { results.append($0) }; consent.systemAllowsRequest = { false }; response?(true)
+        consent.systemAllowsRequest = { true }; request { results.append($0) }; consent.reset(origin); response?(true)
+        XCTAssertEqual(results, [.deny, .deny, .deny])
+        XCTAssertTrue(defaults.dictionary(forKey: MicrophoneConsent.key)?.isEmpty ?? true)
+    }
+    func testNeverResolvingPromptTimesOutWithOneTerminalDenial() {
+        let done = expectation(description: "bounded permission denial")
+        consent.timeout = 0.02
+        var response: ((Bool) -> Void)?, results: [WKPermissionDecision] = []
+        consent.present = { _, _, reply in response = reply; return {} }
+        request { results.append($0); done.fulfill() }
+        wait(for: [done], timeout: 2)
+        response?(true)
+        XCTAssertEqual(results, [.deny]); XCTAssertNil(defaults.dictionary(forKey: MicrophoneConsent.key))
     }
 }
 
@@ -219,7 +377,7 @@ private final class OwnershipCaptureProbe: NSObject, WKUIDelegate {
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         if legacy { decisionHandler(.grant); return } // Only FSConfigureMockCapture views.
         FSRequestPermission(windows, view, origin, frame, type) {
-            decisionHandler($0 == .prompt ? .grant : .deny)
+            decisionHandler($0)
         }
     }
 }
@@ -230,7 +388,14 @@ final class CrossOriginMicrophoneTests: XCTestCase {
         let suite = "FairyStackOwnership." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SavedStacks(defaults: defaults)
+        for host in ["finance-capture.fairystack.com", "jessald-capture.fairystack.com"] {
+            store.add(WorkspaceAddress.parse("https://\(host)")!)
+        }
+        // Refresh the saved-stack snapshot after adding both fixture origins.
         let windows = WorkspaceWindows(version: "test", pairedOrigin: { nil }, defaults: defaults)
+        windows.microphoneConsent.systemAllowsRequest = { true }
+        windows.microphoneConsent.present = { _, _, done in done(true); return {} }
         let probe = OwnershipCaptureProbe(windows)
         let data = WKWebsiteDataStore.nonPersistent()
         var views: [WorkspaceWebView] = [], nativeWindows: [NSWindow] = []
@@ -256,7 +421,7 @@ final class CrossOriginMicrophoneTests: XCTestCase {
             let config = WKWebViewConfiguration(); config.websiteDataStore = data
             guard FSConfigureMockCapture(config.preferences) else { throw NSError(domain: "CaptureFixture", code: 1) }
             let view = WorkspaceWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: config)
-            view.workspaceOrigin = URL(string: "https://\(host)/")!; view.uiDelegate = probe
+            view.workspaceOrigin = WorkspaceAddress.parse("https://\(host)")!; view.uiDelegate = probe
             let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = view; window.makeKeyAndOrderFront(nil)
             views.append(view); nativeWindows.append(window)

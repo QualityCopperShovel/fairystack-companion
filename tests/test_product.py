@@ -16,7 +16,7 @@ class StandaloneProductTests(unittest.TestCase):
         self.assertIn('NSMicrophoneUsageDescription',info)
         self.assertEqual(plistlib.loads((ROOT/'Entitlements.plist').read_bytes()), {'com.apple.security.device.audio-input': True})
         sources='\n'.join(p.read_text() for p in (ROOT/'Sources').rglob('*.swift'))
-        self.assertNotIn('AVFoundation',sources)
+        self.assertNotIn('AVCaptureSession(',sources)  # OS status only; WebKit owns capture.
         # Voice Feed is an auxiliary web approval origin, never a native capture client.
         self.assertNotIn('voice-feed.aisloppy.com',(ROOT/'Sources/FairyStackCompanion/main.swift').read_text())
         self.assertNotIn('com.fairystack.mac-commands',sources)

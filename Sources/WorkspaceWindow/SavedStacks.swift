@@ -80,6 +80,8 @@ final class SavedStacks {
         entries[index].name = name; save(); return true
     }
     func remove(_ url: URL) {
+        var consent = defaults.dictionary(forKey: MicrophoneConsent.key) ?? [:]
+        consent.removeValue(forKey: url.absoluteString); defaults.set(consent, forKey: MicrophoneConsent.key)
         entries.removeAll { $0.url == url }; save()
         windows = windows.filter { $0.origin != url }
     }
