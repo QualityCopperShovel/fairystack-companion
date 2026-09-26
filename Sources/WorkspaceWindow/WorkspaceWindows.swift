@@ -169,6 +169,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private let version: String
     private let pairedOrigin: () -> URL?
     private let store: SavedStacks
+    lazy var diagnostics = NativeDiagnostics(defaults: store.defaults, version: version)
     lazy var microphoneConsent = MicrophoneConsent(store: store)
     private var focusedView: WorkspaceWebView?
     let microphone = MicrophoneOwnership()
@@ -211,6 +212,7 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private lazy var content: WKUserContentController = {
         let controller = WKUserContentController()
         controller.add(WeakMessageHandler(self), name: Self.dragMessage)
+        controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackDiagnostics")
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackMicrophone")
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackPair")
         controller.addScriptMessageHandler(WeakReplyMessageHandler(self), contentWorld: .page, name: "fairystackConnect")
@@ -230,7 +232,9 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     public var terminating = false { didSet { if terminating { microphoneConsent.cancelAll(); persistWindows() } } }
     private var resumeURL: URL?
     private var activateOnResume = false
+    public func finishDiagnostics() { diagnostics.finish() }
     public func adopt(_ arguments: [String]) {
+        diagnostics.start()
         store.migrate(pairedOrigin: pairedOrigin()); store.seedDefault()
         activateOnResume = arguments.contains("--fairystack-activate")
         if let index = arguments.firstIndex(of: "--fairystack-origin"), index + 1 < arguments.count,
@@ -485,6 +489,28 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                       replyHandler: @escaping (Any?, String?) -> Void) {
+        if message.name == "fairystackDiagnostics" {
+            guard let view = message.webView as? WorkspaceWebView, !view.isAuxiliary,
+                  let origin = view.workspaceOrigin, let url = view.url,
+                  message.frameInfo.isMainFrame, message.frameInfo.webView === view,
+                  WorkspaceAddress.sameOrigin(url, origin),
+                  WorkspaceAddress.sameOrigin(message.frameInfo.securityOrigin, origin),
+                  let body = message.body as? [String: Any], let action = body["action"] as? String
+            else { replyHandler(nil, "Diagnostics are only available to this stack’s main window."); return }
+            diagnostics.saw(origin: origin)
+            if action == "read", body.count == 1 {
+                diagnostics.collectCrashes(origin: origin) { [weak self] in
+                    guard let self else { replyHandler(nil, "Window closed."); return }
+                    replyHandler(["events": self.diagnostics.snapshot(origin: origin)], nil)
+                }
+            } else if action == "ack", body.count == 2, let ids = body["ids"] as? [String], ids.count <= 100,
+                      ids.allSatisfy({ UUID(uuidString: $0) != nil }) {
+                diagnostics.acknowledge(ids, origin: origin); replyHandler(["state": "acknowledged"], nil)
+            } else if action == "capture", body.count == 2, let active = body["active"] as? Bool {
+                diagnostics.saw(origin: origin, microphoneActive: active); replyHandler(["state": "recorded"], nil)
+            } else { replyHandler(nil, "Invalid diagnostic request."); }
+            return
+        }
         if message.name == "fairystackMicrophone" {
             guard let view = message.webView as? WorkspaceWebView, !view.isAuxiliary,
                   let origin = view.workspaceOrigin, let url = view.url,
@@ -538,6 +564,9 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { loadFailed(webView, error) }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { loadFailed(webView, error) }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if let view = webView as? WorkspaceWebView, !view.isAuxiliary, let origin = view.workspaceOrigin {
+            diagnostics.webProcessTerminated(origin: origin, microphoneActive: webView.microphoneCaptureState != .none)
+        }
         microphoneConsent.cancel(owner: webView)
         webView.reload()
     }

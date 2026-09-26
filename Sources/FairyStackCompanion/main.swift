@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.9.3"
+let appVersion = "1.10.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -151,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.terminating = true
         return .terminateNow
     }
-    func applicationWillTerminate(_ notification: Notification) { commands.stop() }
+    func applicationWillTerminate(_ notification: Notification) { workspace.finishDiagnostics(); commands.stop() }
     @objc private func checkUpdates() {
         // A background download must never terminate a window that owns microphone capture.
         // Manual restart remains available; automatic activation waits for idle.

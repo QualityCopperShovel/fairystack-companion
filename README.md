@@ -1,4 +1,13 @@
-# FairyStack for Mac 1.9.3
+# FairyStack for Mac 1.10.0
+
+Version 1.10 records content-free crash and capture evidence. The signed-in
+workspace relays macOS crash type, app image UUID/offsets, WebKit process exits,
+and unclean shutdown markers into that stack’s authenticated diagnostic history.
+Unclean exits are not labelled crashes. Pairing commands is not required. The
+local queue is bounded; browser storage takes ownership before native records are
+acknowledged. No audio, transcript, raw crash report, user path or credential is
+uploaded. macOS reports are discovered after launch; absence of a report cannot
+prove that a crash did not happen.
 
 Updates download automatically and activate once recording, uploads and local commands finish.
 
