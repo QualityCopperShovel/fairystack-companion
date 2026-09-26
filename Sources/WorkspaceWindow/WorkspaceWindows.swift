@@ -203,12 +203,10 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
     private var auxiliaries: [(window: NSWindow, view: WorkspaceWebView, title: NSKeyValueObservation)] = []
     // Injectable LaunchServices boundary: internal bootstrap URLs must never reach it.
     var openExternal: (URL) -> Void = { NSWorkspace.shared.open($0) }
-    public var openWebsite: ((URL) -> Void)?
     private func launchExternal(_ url: URL) {
         guard ["https", "http", "mailto", "tel"].contains(url.scheme?.lowercased() ?? ""),
               url.user == nil, url.password == nil else { return }
-        if BrowserAddress.isWeb(url), let openWebsite { openWebsite(url) }
-        else { openExternal(url) }
+        openExternal(url)
     }
     private var downloads: [ObjectIdentifier: URL] = [:]
     private lazy var content: WKUserContentController = {
@@ -295,25 +293,6 @@ public final class WorkspaceWindows: NSObject, NSWindowDelegate, WKNavigationDel
         if let current { focus(current.window); return }
         guard let target = origin ?? welcome() else { return }
         openStack(target)
-    }
-    /// Explicit user share only. Append a draft without submitting or replacing existing work.
-    public func shareBrowserPage(_ text: String) {
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
-        show()
-        guard let page = current, let url = page.view.url,
-              let owner = page.view.workspaceOrigin, WorkspaceAddress.sameOrigin(url, owner) else { return }
-        var finished = false
-        let finish: (Bool) -> Void = { success in
-            guard !finished else { return }; finished = true
-            if !success {
-                let alert = NSAlert(); alert.messageText = "Page copied"; alert.informativeText = "Open a conversation and paste the page into your message."
-                alert.beginSheetModal(for: page.window) { _ in }
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finish(false) }
-        page.view.callAsyncJavaScript(BrowserDraft.script, arguments: ["text": text], in: nil, in: .page) { result in
-            if case .success(let value) = result { finish(value as? Bool == true) } else { finish(false) }
-        }
     }
     @objc public func changeAddress() {
         guard let target = askForAddress(current: origin) else { return }

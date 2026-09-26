@@ -413,6 +413,10 @@ final class ApprovalPopupTests: XCTestCase {
         XCTAssertEqual(js(parent, "approval.closed") as? Bool, true)
         XCTAssertEqual(SavedStacks(defaults: defaults).windows.count, 2)
         XCTAssertTrue(launched.allSatisfy { $0.scheme == "https" })
+        js(parent, "location.href = 'https://external.example/from-workspace'; void 0")
+        spin({ launched.count == 2 })
+        XCTAssertEqual(launched.last?.path, "/from-workspace")
+        XCTAssertEqual(js(parent, "document.querySelector('textarea').value") as? String, "keep draft")
         // Native close-button cancellation also sets .closed for the polling owner.
         js(parent, "window.approval = window.open('about:blank', 'voice-feed-connect', 'popup'); void 0")
         var retry: WorkspaceWebView?

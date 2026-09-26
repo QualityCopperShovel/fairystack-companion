@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import WorkspaceWindow
 
-let appVersion = "1.11.0"
+let appVersion = "1.12.0"
 // Builds before 1.2 used legacyBundleName. Their updaters pin the bundle ID and executable name,
 // so only the folder name changes; a legacy install moves itself once on first launch.
 let appBundleName = "FairyStack.app"
@@ -26,12 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { completion("FairyStack closed."); return }
             self.commands.connectFromWindow(origin: origin, token: token, window: window, completion: completion)
         }
-        windows.openWebsite = { [weak self] url in self?.browser.open(url) }
-        return windows
-    }()
-    private lazy var browser: BrowserWindows = {
-        let windows = BrowserWindows(version: appVersion)
-        windows.sharePage = { [weak self] text in self?.workspace.shareBrowserPage(text) }
         return windows
     }()
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -101,18 +95,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let title = NSMenuItem(title: "FairyStack · \(appVersion)", action: nil, keyEquivalent: "")
         let open = NSMenuItem(title: "Open FairyStack window", action: #selector(WorkspaceWindows.show), keyEquivalent: "")
-        let browse = NSMenuItem(title: "Open Browser window", action: #selector(BrowserWindows.show), keyEquivalent: ""); browse.target = browser
         let address = NSMenuItem(title: "Add stack by address…", action: #selector(WorkspaceWindows.changeAddress), keyEquivalent: "")
         [open, address].forEach { $0.target = workspace }
         let quit = NSMenuItem(title: "Quit FairyStack", action: #selector(quit), keyEquivalent: "q")
         [updateItem, loginItem, quit].forEach { $0.target = self }
-        [title, .separator(), open, browse, address, .separator(), commands.menu, commands.activityMenu, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
+        [title, .separator(), open, address, .separator(), commands.menu, commands.activityMenu, .separator(), loginItem, updateItem, .separator(), quit].forEach(menu.addItem)
         workspace.installStackMenu(in: menu, before: open)
         status.menu = menu
         NSApp.mainMenu = mainMenu()
         if CommandLine.arguments.contains(loginItemArgument) { try? SMAppService.mainApp.register() }
         commands.start(); refreshLogin(); if updates { updater.start() }
-        workspace.adopt(CommandLine.arguments); workspace.restore(); browser.restore()
+        workspace.adopt(CommandLine.arguments); workspace.restore()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, !self.openedByURL else { return }
             self.workspace.welcomeIfNeeded()
@@ -146,16 +139,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(submenu("View", [
             item("Reload", #selector(reloadActiveWindow), "r", target: self),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])]))
-        main.addItem(submenu("Browser", [
-            item("Browser Window", #selector(BrowserWindows.show), "1", target: browser),
-            item("New Tab", #selector(BrowserWindows.newTab), "t", target: browser),
-            item("Address or Search", #selector(BrowserWindows.focusAddress), "l", target: browser),
-            item("Bookmark This Page", #selector(BrowserWindows.toggleBookmark), "d", target: browser),
-            item("Bookmarks", #selector(BrowserWindows.showBookmarks), "b", [.command,.shift], target: browser),
-            item("Back", #selector(BrowserWindows.goBack), "[", target: browser),
-            item("Forward", #selector(BrowserWindows.goForward), "]", target: browser),
-            item("Share Page to FairyStack", #selector(BrowserWindows.shareCurrentPage), "", target: browser),
-            item("Open in Default Browser", #selector(BrowserWindows.openInDefaultBrowser), "", target: browser)]))
         main.addItem(submenu("Window", [
             item("New FairyStack Window", #selector(WorkspaceWindows.newWindow), "n", target: workspace),
             item("FairyStack Window", #selector(WorkspaceWindows.show), "0", target: workspace),
@@ -163,11 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Close", #selector(closeActiveWindow), "w", target: self)]))
         return main
     }
-    @objc private func reloadActiveWindow() { if browser.isKeyWindow { browser.reload() } else { workspace.reload() } }
-    @objc private func closeActiveWindow() { if browser.isKeyWindow { browser.closeTab() } else { NSApp.keyWindow?.performClose(nil) } }
+    @objc private func reloadActiveWindow() { workspace.reload() }
+    @objc private func closeActiveWindow() { NSApp.keyWindow?.performClose(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Quitting or updating keeps the window's open state, so the next launch shows it again.
-        browser.prepareToQuit(); workspace.terminating = true
+        workspace.terminating = true
         return .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { workspace.finishDiagnostics(); commands.stop() }
@@ -191,13 +174,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private func activateUpdateWhenIdle() {
         guard updater.stagedVersion != nil, !checkingUpdateActivation else { return }
-        updateItem.title = "Update ready · waiting for recording or browser work to finish"
-        guard !commands.preventsUpdateRestart, !browser.preventsUpdateRestart else { return }
+        updateItem.title = "Update ready · waiting for recording or local work to finish"
+        guard !commands.preventsUpdateRestart else { return }
         checkingUpdateActivation = true
         workspace.canRestartForUpdate { [weak self] ready in
             guard let self else { return }
             self.checkingUpdateActivation = false
-            guard ready, !self.commands.preventsUpdateRestart, !self.browser.preventsUpdateRestart else { return }
+            guard ready, !self.commands.preventsUpdateRestart else { return }
             self.restart()
         }
     }
